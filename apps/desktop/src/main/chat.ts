@@ -279,8 +279,8 @@ async function runGeneration(
       return
     }
 
-    if (err instanceof SessionExpiredError) {
-      // 会话过期（持续 429 overloaded）：保留部分 + 托盘红联动
+    if (err instanceof SessionExpiredError && resolved.channel === 'web') {
+      // 会话过期（持续 429 overloaded）：仅网页通道上报托盘红（§5.6.4 指纹仅对网页生效）
       s.updateMessage(messageId, { content, meta: { error: err.message } })
       emitDone({
         sessionId,

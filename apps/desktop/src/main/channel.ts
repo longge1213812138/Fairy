@@ -194,11 +194,15 @@ export async function channelTest(message: string): Promise<TestChatResult> {
     return { ok: true, content: res.content }
   } catch (err) {
     if (err instanceof SessionExpiredError) {
-      reportSessionExpired()
+      // 过期指纹仅网页通道生效（§5.6.4）；API 通道的 429 走常规退避，不触发托盘红
+      if (active.channel === 'web') reportSessionExpired()
       return {
         ok: false,
-        expired: true,
-        error: '会话已过期（持续 429 overloaded），请重新保存账号配置'
+        expired: active.channel === 'web',
+        error:
+          active.channel === 'web'
+            ? '会话已过期（持续 429 overloaded），请重新保存账号配置'
+            : errMsg(err)
       }
     }
     if (err instanceof LlmAuthError) {
