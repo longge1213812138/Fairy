@@ -1,0 +1,76 @@
+:root {
+  color-scheme: light dark;
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg, #fafafa);
+  color: var(--color-fg, #222);
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  -webkit-app-region: drag;
+  border-bottom: 1px solid #ddd3;
+}
+
+.titlebar .logo {
+  font-weight: 600;
+}
+
+.titlebar nav {
+  display: flex;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: inherit;
+}
+
+.tab.active {
+  background: #4f46e5;
+  color: #fff;
+}
+
+.version {
+  margin-left: auto;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 20px;
+}
+
+.placeholder h2 {
+  margin-top: 0;
+}
+
+.placeholder p {
+  opacity: 0.7;
+  max-width: 480px;
+  line-height: 1.7;
+}

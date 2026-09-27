@@ -1,0 +1,16 @@
+{
+  "name": "@fairy/core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Fairy assistant core (pure TS, no Electron deps) - sessions/memory/calendar/intent logic",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
