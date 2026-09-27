@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react'
 import SettingsTab from './SettingsTab'
 import ChatPane from './chat/ChatPane'
 import SessionSidebar from './chat/SessionSidebar'
+import MemoryPanel from './memory/MemoryPanel'
 
 /**
  * 阶段 3：主窗口 = 顶栏（logo + 版本）→ 中部内容区 → 底部 tab（聊天/日程/记忆/设置）。
@@ -68,12 +69,7 @@ function MainWindow() {
             <p>自然语言日程管理 + 托盘提醒将在<strong>阶段 5</strong>实现（§5.3）。</p>
           </div>
         )}
-        {tab === 'memory' && (
-          <div className="placeholder">
-            <h2>记忆</h2>
-            <p>FTS5 自动沉淀与注入将在<strong>阶段 4</strong>实现（§5.2）。</p>
-          </div>
-        )}
+        {tab === 'memory' && <MemoryPanel />}
         {tab === 'settings' && <SettingsTab />}
       </main>
 

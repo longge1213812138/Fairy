@@ -1,7 +1,7 @@
 /**
  * 阶段 3 任务 A：SQLite 存储层（单文件库 + 确定性幂等迁移）。
  *
- * 表结构严格按 docs/DEV_PLAN.md §7；迁移沿用蓝本 invariant：
+ * 表结构严格按 docs/DEV_PLAN.md §7（v1 会话/消息/kv，v2 记忆 + FTS5）；迁移沿用蓝本 invariant：
  * - migrations 全部 IF NOT EXISTS 幂等执行；
  * - kv.schema_version 记录当前版本；
  * - db 版本 > 已知版本 → 抛错 fail-visible，绝不写覆盖用户数据；
@@ -42,6 +42,35 @@ export const migrations: Migration[] = [
         CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
       `);
+    }
+  },
+  {
+    version: 2,
+    up(db) {
+      // §7 memories + memory_fts（外部内容表 + trigram，中文 3 字起可 MATCH）；触发器保证 FTS 与表同步
+      db.transaction(() => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS memories(
+            id INTEGER PRIMARY KEY,
+            kind TEXT, content TEXT,
+            source_session TEXT, weight REAL DEFAULT 1.0,
+            created_at INT, updated_at INT
+          );
+          CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+            content, content='memories', content_rowid='id', tokenize='trigram'
+          );
+          CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+            INSERT INTO memory_fts(rowid, content) VALUES (new.id, new.content);
+          END;
+          CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+            INSERT INTO memory_fts(memory_fts, rowid, content) VALUES ('delete', old.id, old.content);
+          END;
+          CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+            INSERT INTO memory_fts(memory_fts, rowid, content) VALUES ('delete', old.id, old.content);
+            INSERT INTO memory_fts(rowid, content) VALUES (new.id, new.content);
+          END;
+        `);
+      })();
     }
   }
 ];

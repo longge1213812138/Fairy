@@ -15,7 +15,7 @@ import {
   showMainWindow,
   toggleFloat
 } from './windows'
-import { initChat } from './chat'
+import { initChat, shutdownChat } from './chat'
 import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 
 // DEV_PLAN §7：尽早把 userData 指到 %APPDATA%/fairy（小写 fairy），必须先于一切读取 userData 的逻辑
@@ -79,7 +79,7 @@ if (!app.requestSingleInstanceLock()) {
 // 退出前解除全局热键（globalShortcut.unregisterAll 幂等，未注册也安全）
 app.on('will-quit', () => unregisterHotkeys())
 
-// 退出前停掉网关子进程（防 Windows 僵尸进程）；幂等防重入，3s 兜底超时在 shutdownSidecar 内
+// 退出前清空闲记忆抽取定时器 + 停掉网关子进程（防 Windows 僵尸进程）；幂等防重入，3s 兜底超时在 shutdownSidecar 内
 let shuttingDown = false
 app.on('before-quit', (event) => {
   if (shuttingDown) {
@@ -88,6 +88,7 @@ app.on('before-quit', (event) => {
   }
   shuttingDown = true
   event.preventDefault()
+  shutdownChat()
   shutdownSidecar().finally(() => app.exit())
 })
 

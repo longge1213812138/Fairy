@@ -8,13 +8,17 @@ import type {
   FairyApi,
   GatewayAccountConfig,
   GatewayState,
+  MemoryImportResult,
+  MemoryKind,
+  MemoryListFilter,
+  MemoryRecord,
   MessageDto,
   SessionMeta,
   TestChatResult
 } from '@fairy/core'
 
 /**
- * 阶段 3 完整 FairyApi（按 @fairy/core ipc.ts 契约，通道名一律用 IPC 常量）。
+ * 阶段 3+4 完整 FairyApi（按 @fairy/core ipc.ts 契约，通道名一律用 IPC 常量）。
  * 事件订阅统一 ipcRenderer.on(channel, (_e, payload) => cb(payload)) 包装并返回退订函数。
  * renderer 不直接 import electron，只经此边界访问 main。
  */
@@ -67,6 +71,23 @@ contextBridge.exposeInMainWorld(
         onEvent<ChatDoneEvent>(IPC.chatDone, cb),
       onBusy: (cb: (e: ChatBusyEvent) => void): (() => void) =>
         onEvent<ChatBusyEvent>(IPC.chatBusy, cb)
+    },
+
+    // ===== 阶段 4：记忆面板（memory:changed 双路广播：面板手动操作 + 聊天管道/抽取） =====
+    memory: {
+      list: (filter?: MemoryListFilter): Promise<MemoryRecord[]> =>
+        ipcRenderer.invoke(IPC.memoryList, filter),
+      add: (input: { content: string; kind?: MemoryKind }): Promise<MemoryRecord> =>
+        ipcRenderer.invoke(IPC.memoryAdd, input),
+      update: (
+        id: number,
+        patch: { content?: string; kind?: MemoryKind; weight?: number }
+      ): Promise<void> => ipcRenderer.invoke(IPC.memoryUpdate, id, patch),
+      remove: (id: number): Promise<void> => ipcRenderer.invoke(IPC.memoryRemove, id),
+      exportAll: (): Promise<MemoryRecord[]> => ipcRenderer.invoke(IPC.memoryExport),
+      importMany: (raw: unknown): Promise<MemoryImportResult> =>
+        ipcRenderer.invoke(IPC.memoryImport, raw),
+      onChanged: (cb: () => void): (() => void) => onEvent<void>(IPC.memoryChanged, () => cb())
     }
   } as unknown as FairyApi & { name: string; version: string })
 )

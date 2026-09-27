@@ -6,3 +6,6 @@ dist/
 .DS_Store
 Thumbs.db
 *.tsbuildinfo
+
+# Pi 工具本地状态
+.pi/

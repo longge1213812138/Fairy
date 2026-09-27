@@ -74,6 +74,19 @@ export interface FairyApi {
     /** null = 空闲；广播给所有窗口 */
     onBusy(cb: (e: ChatBusyEvent) => void): () => void;
   };
+
+  // ===== 阶段 4：记忆面板 =====
+  memory: {
+    list(filter?: MemoryListFilter): Promise<MemoryRecord[]>;
+    add(input: { content: string; kind?: MemoryKind }): Promise<MemoryRecord>;
+    update(id: number, patch: { content?: string; kind?: MemoryKind; weight?: number }): Promise<void>;
+    remove(id: number): Promise<void>;
+    exportAll(): Promise<MemoryRecord[]>;
+    /** 入参为导入文件的 JSON 解析结果（任意值），内部校验/去重 */
+    importMany(raw: unknown): Promise<MemoryImportResult>;
+    /** 记忆经聊天管道变更（remember/forget/抽取）时广播 */
+    onChanged(cb: () => void): () => void;
+  };
 }
 
 // ===== 阶段 3：会话 + 聊天类型 =====
@@ -136,5 +149,40 @@ export const IPC = {
   chatStop: 'chat:stop',
   chatDelta: 'chat:delta',
   chatDone: 'chat:done',
-  chatBusy: 'chat:busy'
+  chatBusy: 'chat:busy',
+  memoryList: 'memory:list',
+  memoryAdd: 'memory:add',
+  memoryUpdate: 'memory:update',
+  memoryRemove: 'memory:remove',
+  memoryExport: 'memory:export',
+  memoryImport: 'memory:import',
+  memoryChanged: 'memory:changed'
 } as const;
+
+// ===== 阶段 4：记忆类型 =====
+
+export type MemoryKind = 'preference' | 'fact' | 'note' | 'decision' | 'topic';
+
+export interface MemoryRecord {
+  id: number;
+  kind: MemoryKind;
+  content: string;
+  sourceSession: string | null;
+  weight: number;
+  /** epoch ms */
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MemoryListFilter {
+  kind?: MemoryKind | 'all';
+  /** 内容子串过滤（面板搜索框） */
+  query?: string;
+  limit?: number;
+}
+
+export interface MemoryImportResult {
+  imported: number;
+  skipped: number;
+  errors: string[];
+}

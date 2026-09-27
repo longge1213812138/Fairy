@@ -30,8 +30,8 @@ export interface SessionStore {
   updateMessage(id: number, patch: { content?: string; meta?: Record<string, unknown> }): void;
   /** 升序；limit = 最新 N 条后升序返回 */
   listMessages(sessionId: string, limit?: number): MessageDto[];
-  /** FAIRY_SYSTEM_PROMPT + trimToBudget 的历史 */
-  buildContext(sessionId: string): ChatMessage[];
+  /** FAIRY_SYSTEM_PROMPT +（systemExtra 非空则 \n\n+systemExtra，记忆块由 main 拼入）+ trimToBudget 的历史 */
+  buildContext(sessionId: string, opts?: { systemExtra?: string }): ChatMessage[];
 }
 
 interface SessionRow {
@@ -223,7 +223,7 @@ export function createSessionStore(opts: { dbPath: string }): SessionStore {
       return rows.reverse().map(toMessageDto);
     },
 
-    buildContext(sessionId) {
+    buildContext(sessionId, opts) {
       const rows = db
         .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC')
         .all(sessionId) as MessageRow[];
@@ -233,7 +233,12 @@ export function createSessionStore(opts: { dbPath: string }): SessionStore {
         if (content.trim() === '') continue;
         history.push({ role: row.role === 'assistant' ? 'assistant' : 'user', content });
       }
-      return trimToBudget(history, FAIRY_SYSTEM_PROMPT, CONTEXT_BUDGET_CHARS);
+      const systemExtra = opts?.systemExtra;
+      const system =
+        systemExtra != null && systemExtra.trim() !== ''
+          ? `${FAIRY_SYSTEM_PROMPT}\n\n${systemExtra}`
+          : FAIRY_SYSTEM_PROMPT;
+      return trimToBudget(history, system, CONTEXT_BUDGET_CHARS);
     }
   };
 

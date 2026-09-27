@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { QUICK_SESSION_ID } from '../ipc';
-import { openDatabase } from '../store';
+import { LATEST_SCHEMA_VERSION, openDatabase } from '../store';
 import {
   CONTEXT_BUDGET_CHARS,
   FAIRY_SYSTEM_PROMPT,
@@ -48,7 +48,7 @@ afterEach(() => {
 });
 
 describe('建库与迁移', () => {
-  it('首次建库：schema_version=1，§7 表结构齐全', () => {
+  it('首次建库：schema_version=LATEST_SCHEMA_VERSION，§7 表结构齐全', () => {
     const dbPath = freshDb();
     makeStore(dbPath);
 
@@ -56,7 +56,7 @@ describe('建库与迁移', () => {
     const version = raw.prepare("SELECT v FROM kv WHERE k = 'schema_version'").get() as {
       v: string;
     };
-    expect(version.v).toBe('1');
+    expect(version.v).toBe(String(LATEST_SCHEMA_VERSION));
     const tables = (
       raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
         name: string;
@@ -84,18 +84,25 @@ describe('建库与迁移', () => {
     expect(store3.listMessages(session.id)).toHaveLength(1);
   });
 
-  it('手工把 schema_version 写成 99 → createSessionStore 抛错且不覆盖数据', () => {
+  it('手工把 schema_version 写成未来版本 → createSessionStore 抛错且不覆盖数据', () => {
+    const FUTURE_SCHEMA_VERSION = 99;
+    expect(FUTURE_SCHEMA_VERSION).toBeGreaterThan(LATEST_SCHEMA_VERSION); // 前提：高于已知版本
+
     const dbPath = freshDb();
     const setup = openDatabase(dbPath);
-    setup.prepare("UPDATE kv SET v = '99' WHERE k = 'schema_version'").run();
+    setup
+      .prepare("UPDATE kv SET v = ? WHERE k = 'schema_version'")
+      .run(String(FUTURE_SCHEMA_VERSION));
     setup.close();
 
-    expect(() => createSessionStore({ dbPath })).toThrow(/99/);
+    expect(() => createSessionStore({ dbPath })).toThrow(
+      new RegExp(String(FUTURE_SCHEMA_VERSION))
+    );
 
     // fail-visible：版本号原样保留，绝不写覆盖
     const check = new Database(dbPath);
     const row = check.prepare("SELECT v FROM kv WHERE k = 'schema_version'").get() as { v: string };
-    expect(row.v).toBe('99');
+    expect(row.v).toBe(String(FUTURE_SCHEMA_VERSION));
     check.close();
   });
 });
@@ -298,6 +305,26 @@ describe('buildContext', () => {
       { role: 'system', content: FAIRY_SYSTEM_PROMPT },
       { role: 'user', content: '真问题' }
     ]);
+  });
+
+  it('systemExtra 非空拼在 system 后（\n\n 分隔），空/缺省不拼', () => {
+    const store = makeStore(freshDb());
+    const s = store.createSession();
+    store.appendMessage({ sessionId: s.id, role: 'user', content: '问题' });
+
+    const extra = '【关于这个用户】\n- 喜欢简洁回答（preference, 9/15）';
+    expect(store.buildContext(s.id, { systemExtra: extra })[0]).toEqual({
+      role: 'system',
+      content: `${FAIRY_SYSTEM_PROMPT}\n\n${extra}`
+    });
+    expect(store.buildContext(s.id, { systemExtra: '   ' })[0]).toEqual({
+      role: 'system',
+      content: FAIRY_SYSTEM_PROMPT
+    });
+    expect(store.buildContext(s.id, {})[0]).toEqual({
+      role: 'system',
+      content: FAIRY_SYSTEM_PROMPT
+    });
   });
 
   it('超预算保留最新、时序正确（200 条长消息）', () => {

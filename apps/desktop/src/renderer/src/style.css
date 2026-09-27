@@ -651,3 +651,212 @@ body {
   margin-top: 6vh;
 }
 
+
+/* ===== 阶段 4：记忆面板 ===== */
+.memory-panel {
+  max-width: 860px;
+}
+
+/* 工具栏：筛选/搜索/按钮，窄窗口自动换行不溢出 */
+.memory-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.mem-filter,
+.mem-search,
+.mem-form select {
+  padding: 7px 10px;
+  border: 1px solid rgba(107, 114, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+}
+.mem-filter:focus,
+.mem-search:focus,
+.mem-form select:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+.mem-search {
+  flex: 1;
+  min-width: 150px;
+}
+.memory-toolbar .btn {
+  margin-top: 0;
+}
+.mem-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 提示条：红=错误 / 绿=导入结果 / 灰=普通提示 */
+.mem-alert {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.mem-alert-error {
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  background: rgba(220, 38, 38, 0.08);
+  color: #dc2626;
+}
+.mem-alert-import {
+  border: 1px solid rgba(22, 163, 74, 0.4);
+  background: rgba(22, 163, 74, 0.08);
+  color: #16a34a;
+}
+.mem-alert-info {
+  border: 1px solid rgba(107, 114, 128, 0.3);
+  background: rgba(107, 114, 128, 0.08);
+}
+.mem-import-errors {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #d97706;
+}
+
+/* 新增 / 行内编辑表单 */
+.mem-form {
+  border: 1px solid rgba(79, 70, 229, 0.35);
+  background: rgba(79, 70, 229, 0.06);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.mem-form textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid rgba(107, 114, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.mem-form textarea:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+.mem-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mem-form-row .btn {
+  margin-top: 0;
+}
+
+/* 记忆列表行 */
+.mem-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mem-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(107, 114, 128, 0.25);
+  border-radius: 10px;
+}
+.mem-row:hover {
+  border-color: rgba(79, 70, 229, 0.45);
+}
+.mem-content {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mem-date {
+  flex-shrink: 0;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  text-align: right;
+  opacity: 0.55;
+}
+/* hover 显操作按钮 */
+.mem-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.mem-row:hover .mem-actions,
+.mem-row:focus-within .mem-actions {
+  opacity: 1;
+}
+.mem-actions .btn {
+  margin-top: 0;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.mem-actions .btn.mem-del:hover:not(:disabled) {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+/* kind 徽章五色：preference 靛 / fact 绿 / note 橙 / decision 青 / topic 紫 */
+.mem-kind {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mem-kind-preference {
+  background: rgba(79, 70, 229, 0.12);
+  color: #4f46e5;
+}
+.mem-kind-fact {
+  background: rgba(22, 163, 74, 0.12);
+  color: #16a34a;
+}
+.mem-kind-note {
+  background: rgba(217, 119, 6, 0.12);
+  color: #d97706;
+}
+.mem-kind-decision {
+  background: rgba(8, 145, 178, 0.12);
+  color: #0891b2;
+}
+.mem-kind-topic {
+  background: rgba(147, 51, 234, 0.12);
+  color: #9333ea;
+}
+
+/* 空态 / 加载 */
+.mem-empty {
+  border: 1px dashed rgba(107, 114, 128, 0.4);
+  border-radius: 10px;
+  padding: 32px 20px;
+  text-align: center;
+  font-size: 13.5px;
+  line-height: 1.9;
+  opacity: 0.7;
+}
+.mem-loading {
+  padding: 12px;
+  font-size: 13px;
+  opacity: 0.55;
+}

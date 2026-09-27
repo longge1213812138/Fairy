@@ -5,6 +5,9 @@
  * - 阶段 2：gateway:getState / gateway:configure / gateway:testChat / app:openExternal
  * - 阶段 3：会话 CRUD 与聊天（通道名一律用 @fairy/core 的 IPC 常量，勿手写字符串）：
  *   session:list / session:create / session:remove / chat:history / chat:send / chat:stop
+ * - 阶段 4：记忆面板：memory:list / memory:add / memory:update / memory:remove /
+ *   memory:export / memory:import；add/update/remove/import 成功后广播 memory:changed
+ *   （聊天管道的 remember/forget/抽取变更在 chat.ts/extract.ts 内广播，双路汇一）
  * 事件广播：
  * - 网关状态：sidecar onState → broadcast('gateway:state')，300ms 去抖合并（'gateway:state' 为阶段 2 遗留通道名，不在 IPC 常量表，保持兼容）
  * - 聊天事件（delta/done/busy）与会话变化（session:changed）由 chat.ts 直接走 windows.broadcast
@@ -14,9 +17,10 @@ import { app, ipcMain, nativeImage, shell } from 'electron'
 import type { Tray } from 'electron'
 import { join } from 'node:path'
 import { IPC, APP_NAME, FAIRY_VERSION } from '@fairy/core'
-import type { GatewayAccountConfig, GatewayState } from '@fairy/core'
+import type { GatewayAccountConfig, GatewayState, MemoryKind, MemoryListFilter } from '@fairy/core'
 import {
   createSession,
+  getMemoryStore,
   listHistory,
   listSessions,
   removeSession,
@@ -30,6 +34,71 @@ let tray: Tray | null = null
 let normalIcon: Electron.NativeImage | null = null
 let redIcon: Electron.NativeImage | null = null
 let iconsResolved = false
+
+// ===== 阶段 4：记忆入参校验（IPC 边界不信任 renderer，坏输入 throw → invoke reject） =====
+
+const MEMORY_KINDS: readonly MemoryKind[] = ['preference', 'fact', 'note', 'decision', 'topic']
+
+function normalizeKind(value: unknown): MemoryKind | undefined {
+  return typeof value === 'string' && (MEMORY_KINDS as readonly string[]).includes(value)
+    ? (value as MemoryKind)
+    : undefined
+}
+
+function parseMemoryAdd(input: unknown): { content: string; kind?: MemoryKind } {
+  const obj = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+  const content = typeof obj.content === 'string' ? obj.content.trim() : ''
+  if (content === '') throw new Error('content 必须为非空字符串')
+  const kind = normalizeKind(obj.kind)
+  return kind ? { content, kind } : { content }
+}
+
+function parseMemoryPatch(patch: unknown): {
+  content?: string
+  kind?: MemoryKind
+  weight?: number
+} {
+  const obj = (typeof patch === 'object' && patch !== null ? patch : {}) as Record<string, unknown>
+  const next: { content?: string; kind?: MemoryKind; weight?: number } = {}
+  if (obj.content !== undefined) {
+    const content = typeof obj.content === 'string' ? obj.content.trim() : ''
+    if (content === '') throw new Error('content 必须为非空字符串')
+    next.content = content
+  }
+  if (obj.kind !== undefined) {
+    const kind = normalizeKind(obj.kind)
+    if (!kind) throw new Error('kind 非法')
+    next.kind = kind
+  }
+  if (obj.weight !== undefined) {
+    if (typeof obj.weight !== 'number' || !Number.isFinite(obj.weight)) {
+      throw new Error('weight 必须为数字')
+    }
+    next.weight = obj.weight
+  }
+  return next
+}
+
+function parseMemoryId(id: unknown): number {
+  if (typeof id !== 'number' || !Number.isInteger(id)) throw new Error('id 必须为整数')
+  return id
+}
+
+function parseMemoryFilter(filter: unknown): MemoryListFilter | undefined {
+  const obj = (typeof filter === 'object' && filter !== null ? filter : {}) as Record<string, unknown>
+  const kind = obj.kind === 'all' ? 'all' : normalizeKind(obj.kind)
+  const query = typeof obj.query === 'string' && obj.query !== '' ? obj.query : undefined
+  const limit =
+    typeof obj.limit === 'number' && Number.isFinite(obj.limit) && obj.limit > 0
+      ? Math.floor(obj.limit)
+      : undefined
+  if (kind === undefined && query === undefined && limit === undefined) return undefined
+  return {
+    ...(kind !== undefined ? { kind } : {}),
+    ...(query !== undefined ? { query } : {}),
+    ...(limit !== undefined ? { limit } : {})
+  }
+}
 
 function iconsDir(): string {
   // 开发态：项目 resources/；打包后：extraResources（与 windows.ts iconPath() 规则一致）
@@ -101,6 +170,30 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.chatStop, (_event, id: unknown) => {
     if (typeof id !== 'string') return
     return stopChat(id)
+  })
+
+  // ===== 阶段 4：记忆（面板 CRUD；add/update/remove/import 成功后广播 memoryChanged） =====
+  ipcMain.handle(IPC.memoryList, (_event, filter?: unknown) =>
+    getMemoryStore().list(parseMemoryFilter(filter))
+  )
+  ipcMain.handle(IPC.memoryAdd, (_event, input: unknown) => {
+    const record = getMemoryStore().add(parseMemoryAdd(input))
+    broadcast(IPC.memoryChanged)
+    return record
+  })
+  ipcMain.handle(IPC.memoryUpdate, (_event, id: unknown, patch: unknown) => {
+    getMemoryStore().update(parseMemoryId(id), parseMemoryPatch(patch))
+    broadcast(IPC.memoryChanged)
+  })
+  ipcMain.handle(IPC.memoryRemove, (_event, id: unknown) => {
+    getMemoryStore().remove(parseMemoryId(id))
+    broadcast(IPC.memoryChanged)
+  })
+  ipcMain.handle(IPC.memoryExport, () => getMemoryStore().exportAll())
+  ipcMain.handle(IPC.memoryImport, (_event, raw: unknown) => {
+    const result = getMemoryStore().importMany(raw)
+    broadcast(IPC.memoryChanged)
+    return result
   })
 
   // 网关状态广播：sidecar onState → 全窗口 send；300ms 去抖合并高频变化
