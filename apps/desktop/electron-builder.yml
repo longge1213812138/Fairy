@@ -6,6 +6,9 @@ directories:
 files:
   - out/**/*
   - package.json
+# better-sqlite3 v13 自带 N-API prebuilds（ABI 稳定，node/electron 通用），
+# 无需 electron-rebuild（本机无 VS Build Tools，重建会直接报错）
+npmRebuild: false
 extraResources:
   - from: resources/icon.png
     to: icon.png

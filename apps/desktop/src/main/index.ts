@@ -1,56 +1,27 @@
-import { app, shell, BrowserWindow, Tray, Menu, nativeImage, Notification } from 'electron'
-import { join } from 'node:path'
+/**
+ * 启动与生命周期（阶段 3 起瘦身：窗口/托盘状态/IPC/热键各归其位）。
+ * - 窗口（主 + 浮窗）→ windows.ts；热键 → hotkeys.ts；聊天编排 → chat.ts
+ * - 本文件只留：userData 初始化、托盘、单实例锁、退出时 sidecar 回收。
+ */
+import { app, BrowserWindow, Menu, Notification, Tray, nativeImage } from 'electron'
 import { APP_NAME, FAIRY_VERSION } from '@fairy/core'
 import { initUserDataPath } from './config'
 import { initSidecar, shutdownSidecar } from './sidecar'
-import { registerIpcHandlers, registerTray, sendStateOnFinishLoad } from './ipc'
+import { registerIpcHandlers, registerTray } from './ipc'
+import {
+  createFloatWindow,
+  createMainWindow,
+  iconPath,
+  showMainWindow,
+  toggleFloat
+} from './windows'
+import { initChat } from './chat'
+import { registerHotkeys, unregisterHotkeys } from './hotkeys'
 
 // DEV_PLAN §7：尽早把 userData 指到 %APPDATA%/fairy（小写 fairy），必须先于一切读取 userData 的逻辑
 initUserDataPath()
 
-let win: BrowserWindow | null = null
 let tray: Tray | null = null
-
-function iconPath(): string {
-  // 开发态：项目 resources/；打包后：extraResources
-  return app.isPackaged
-    ? join(process.resourcesPath, 'icon.png')
-    : join(app.getAppPath(), 'resources/icon.png')
-}
-
-function createWindow(): void {
-  win = new BrowserWindow({
-    width: 980,
-    height: 640,
-    show: false,
-    title: `${APP_NAME} ${FAIRY_VERSION}`,
-    icon: iconPath(),
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
-  })
-
-  win.on('ready-to-show', () => win?.show())
-
-  // 外链一律交给系统浏览器
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
-
-  // 窗口加载完成晚于状态变化时补发一次网关状态
-  sendStateOnFinishLoad(win.webContents)
-
-  const devUrl = process.env['ELECTRON_RENDERER_URL']
-  if (devUrl) {
-    win.loadURL(devUrl)
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-}
 
 function createTray(): void {
   const image = nativeImage.createFromPath(iconPath())
@@ -63,7 +34,8 @@ function createTray(): void {
   const autoStart = app.getLoginItemSettings().openAtLogin
 
   const menu = Menu.buildFromTemplate([
-    { label: '打开主窗口', click: () => (win?.show() ?? createWindow()) },
+    { label: '打开主窗口', click: () => showMainWindow() },
+    { label: '快速问答 (Alt+Space)', click: () => toggleFloat() },
     {
       label: '开机自启',
       type: 'checkbox',
@@ -76,30 +48,36 @@ function createTray(): void {
       click: () =>
         new Notification({
           title: APP_NAME,
-          body: `版本 ${FAIRY_VERSION}（阶段 2）`
+          body: `版本 ${FAIRY_VERSION}（阶段 3）`
         }).show()
     },
     { label: '退出', click: () => app.quit() }
   ])
   tray.setContextMenu(menu)
-  tray.on('click', () => (win?.show() ?? createWindow()))
+  tray.on('click', () => showMainWindow())
 }
 
 // 单实例锁：防止多开导致 sidecar/数据文件竞争
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', () => win?.show())
+  app.on('second-instance', () => showMainWindow())
   app.whenReady().then(() => {
-    createWindow()
+    createMainWindow()
+    createFloatWindow() // 预建隐藏：Alt+Space show 即出（DEV_PLAN §8 风险表）
     createTray()
     registerIpcHandlers()
     initSidecar()
+    initChat()
+    registerHotkeys()
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+      if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
     })
   })
 }
+
+// 退出前解除全局热键（globalShortcut.unregisterAll 幂等，未注册也安全）
+app.on('will-quit', () => unregisterHotkeys())
 
 // 退出前停掉网关子进程（防 Windows 僵尸进程）；幂等防重入，3s 兜底超时在 shutdownSidecar 内
 let shuttingDown = false

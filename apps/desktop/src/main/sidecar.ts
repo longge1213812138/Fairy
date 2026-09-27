@@ -53,6 +53,22 @@ function emitState(): void {
   stateListener?.(getGatewayState())
 }
 
+/**
+ * 会话过期标记的两个公开入口（阶段 3：聊天流水与 testChat 共用，语义一致）：
+ * - reportSessionExpired：聊天命中 SessionExpiredError / testChat 命中过期指纹 → 置 true 并 emit
+ * - reportSessionOk：configure 成功 / 任一成功调用 → 清 false 并 emit
+ * emit 后由 ipc.ts 注册的监听器去抖广播 gateway:state + setTrayState（托盘红联动）。
+ */
+export function reportSessionExpired(): void {
+  lastTestExpired = true
+  emitState()
+}
+
+export function reportSessionOk(): void {
+  lastTestExpired = false
+  emitState()
+}
+
 /** whenReady 调用。幂等。 */
 export function initSidecar(): void {
   if (inited) return
@@ -185,7 +201,7 @@ export async function configureGateway(input: GatewayAccountConfig): Promise<Con
     }
   }
 
-  lastTestExpired = false // configure 成功 → 清过期标记
+  reportSessionOk() // configure 成功 → 清过期标记并刷新状态
 
   try {
     if (manager) {
@@ -226,11 +242,11 @@ export async function testChat(message: string): Promise<TestChatResult> {
 
   try {
     const res = await client.chatOnce([{ role: 'user', content: message }])
-    lastTestExpired = false // testChat 成功 → 清过期标记
+    reportSessionOk() // testChat 成功 → 清过期标记
     return { ok: true, content: res.content }
   } catch (err) {
     if (err instanceof SessionExpiredError) {
-      lastTestExpired = true
+      reportSessionExpired()
       return {
         ok: false,
         expired: true,

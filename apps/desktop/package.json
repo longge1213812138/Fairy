@@ -8,13 +8,17 @@
     "dev": "set ELECTRON_RUN_AS_NODE=&& electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "package:win": "electron-vite build && electron-builder --win",
-    "postinstall": "electron-builder install-app-deps"
+    "package:win": "electron-vite build && electron-builder --win"
   },
   "dependencies": {
     "@fairy/core": "workspace:*",
+    "better-sqlite3": "^13.0.3",
+    "highlight.js": "^11.12.0",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
