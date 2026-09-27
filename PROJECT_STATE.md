@@ -1,13 +1,13 @@
 # Fairy 项目交接材料
 
-> 交接编号：H5 ｜ 状态：**通道选择完成；阶段 2/3/4 + 通道选择待 GUI 验收（阶段 5 暂缓）** ｜ 更新时间：2026-09-27
+> 交接编号：H6 ｜ 状态：**阶段 2/3/4/5 + 通道选择全部代码完成，待 GUI 验收** ｜ 更新时间：2026-09-27
 > 工作目录（绝对路径）：`C:\Users\91533\Desktop\Fairy`
 
 ## 1. 任务与版本
 
 - **目标**：Fairy = Windows 桌面私人助手，以 **DeepSeek 网页版**（chat.deepseek.com 会话）为 LLM 后端，零 API 成本。MVP 范围 F1–F7 见 `docs/DEV_PLAN.md` §1。
 - **范围（MVP）**：聊天（流式）、多会话、"帮我记东西"、日程+托盘通知、FTS5 长期记忆、托盘/Alt+Space 浮窗/开机自启、登录引导流。明确不做：工具循环/Agent/Shell、Skill、MCP、云同步、多用户、cron 引擎。
-- **完成标准**：里程碑 M0–M4（见 DEV_PLAN §9），当前 **M0 已达成；阶段 2/3/4 + 通道选择（§5.6）代码完成（待人工 GUI 验收后打 m1、m2）**。
+- **完成标准**：里程碑 M0–M4（见 DEV_PLAN §9），当前 **M0 已达成；MVP 阶段 2/3/4/5 + 通道选择全部代码完成（待人工 GUI 验收后打 m1/m2/m3，剩阶段 6 打包硬化）**。
 - **git 位置**：历史：
   - `bf06919` 阶段 0：pnpm workspace + Electron 骨架 + 图标 + NSIS 打包通过
   - `b9932fe` docs：附录 C 本机环境备忘
@@ -16,6 +16,7 @@
   - `011a6e9`/`fdf536d` 阶段 3：会话系统 + 聊天 UI + 双窗口
   - `129c655` 阶段 4：记忆（FTS5）+ 意图解析管线
   - `f4e61df` 通道选择：启动不自动登录，用户选 OpenAI API 或 DeepSeek 网页（§5.6）
+  - `75876c5` 阶段 5：日程（意图 schedule_* + 通知轮询 + 面板）
 - **文档版本**：`docs/DEV_PLAN.md` v0.2（需求收敛后的有效版本）。
 
 ## 2. 权威资料
@@ -43,7 +44,7 @@
 - 阶段 0 采用 electron-vite 模板结构。
 
 **用户新决定（2026-09-27）**：
-- **阶段 5（日程）暂缓**，不做。
+- **阶段 5（日程）**：一度暂缓，同日恢复并完成（见 §4 与 `75876c5`）。
 - **通道选择优先**：启动不自动登录 DeepSeek 网页，设置页让用户选 OpenAI 兼容 API 或 DeepSeek 网页（已实现，DEV_PLAN 新增 §5.6）。
 
 **本机硬性限制（附录 C，务必遵守）**：
@@ -62,7 +63,7 @@
 | 阶段 2 sidecar+登录流 | ✅ **代码完成（2026-09-27），待人工 GUI 验收** | core：`llm/`（流式/退避/SessionExpired 指纹，单测 25 绿含真实网关集成）+ `gateway/`（spawn/日志扫描/taskkill 树杀）；main：`config.ts`（config.json + 一次性迁移）/`sidecar.ts`/`ipc.ts`/托盘红图标；设置页四步引导流+测试对话；build 产物曾因 `@fairy/core` 外部化崩溃→已改 `externalizeDepsPlugin({exclude:['@fairy/core']})`+renderer 走 `index.web.ts` |
 | 阶段 3 会话+聊天 UI | ✅ **代码完成（2026-09-27），待人工 GUI 验收** | core：`store/`（WAL+版本化迁移 fail-visible）+ `sessions/`（CRUD/自动标题/9000 字符裁剪/quick 会话），测试 48/48 绿；main：`windows.ts`（浮窗预建/Esc+blur 收起）+ `hotkeys.ts`（Alt+Space 失败降级）+ `chat.ts`（单飞流式编排，delta/done/busy 广播，stop 保留部分，过期→托盘红）；renderer：底部 tab + 会话侧栏 + ChatPane（react-markdown 流式、停止按钮、浮窗 `?float=1`） |
 | 阶段 4 记忆 | ✅ **代码完成（2026-09-27），待人工 GUI 验收** | 迁移 v2（memories+trigram FTS+触发器，真实库 v1→v2 烟测升级成功）；意图 remember/forget/chat（失败兜底 chat）；检索三层候选+coverage×kind权重×0.95^天衰减 top-8（验收召回场景有单测）；chat 三步管线+空闲 5min 抽取；记忆面板（五色筛选/增删改/导出导入/onChanged 实时刷新）；测试 97/97 绿 |
-| 阶段 5 日程 | ⏸ **暂缓（用户决定 2026-09-27）** | 开工要点见 §5 ②（备查） |
+| 阶段 5 日程 | ✅ **代码完成（2026-09-27），待 GUI 验收** | 迁移 v3（events+索引，真实库 v2→v3 烟测）；意图 schedule_add/done/cancel/query（add 非法时间追问一次、不写脏数据）；notify-loop 30s 轮询→通知→点通知开日程 tab、启动 sweep 已过期不补弹、退出前未触发提示；CalendarPanel（今天/明天/全部/勾选/手动增删/徽章）；测试 137/137 绿 |
 | 通道选择（§5.6，插入需求） | ✅ **完成（2026-09-27），待 GUI 验收** | 启动零登录烟测通过（12s 零 ds-free-api 进程/零端口）；channel=null 选择卡、API 表单（baseUrl/key/model）、网页通道需手点「启动网关」才登录、切 API 自动停网关、过期指纹按通道门控（仅 web 上报托盘红） |
 | 阶段 6 打包硬化 | ⬜ 未开始 | 阶段 0 的 NSIS 已通，硬化项（自启默认勾选/DPAPI/日志）未做 |
 
@@ -72,9 +73,9 @@
 
 ## 5. 接续动作
 
-**阶段 4 + 通道选择已完成，下一步 = ① GUI 验收（阶段 2/3/4 + 通道选择合并） → 打 tag `m1`/`m2` → ② 下一步由用户定：恢复阶段 5（日程）或先做阶段 6（打包）**：
+**阶段 2/3/4/5 + 通道选择全部代码完成，下一步 = ① GUI 验收（合并清单） → 打 tag `m1`/`m2`/`m3` → ② 下一步由用户定（阶段 6 打包硬化 或 试用反馈迭代）**：
 
-**① GUI 验收清单（阶段 2/3/4 合并，DEV_PLAN §6 各阶段验收 + §9 M2）**：
+**① GUI 验收清单（阶段 2/3/4/5 + 通道选择合并，DEV_PLAN §6 各阶段验收 + §9 M2/M3）**：
 1. `pnpm dev`（新终端，Node 24，`ELECTRON_RUN_AS_NODE` 未被继承）。
 2. **聊天（阶段 3）**：底部 tab；新建/切换/删除 10 个会话；流式 markdown；停止按钮保留已生成部分；**Alt+Space 浮窗**问答、Esc 收起；重启后历史完整。
 3. **设置（阶段 2）**：测试对话绿卡；改坏密码→保存→托盘红+红卡→改回恢复；托盘退出后无 ds-free-api 残留。
@@ -90,14 +91,22 @@
    - 切到网页：保存账号 → 点「启动网关」才登录（tasklist 出现 ds-free-api）→ 测试对话通；
    - 切回 API → 网关自动停（进程消失）；重启 Fairy → **不自动登录**，网页通道需再点一次启动；
    - 会话过期红卡仅网页通道出现（已按通道门控）。
-6. 通过后：`git tag m1 m2`。
+6. **日程（阶段 5，M3 验收）**：
+   - 「明天上午十点提醒我交周报」→ 回复确认语含正确绝对时间；面板“明天”可见该条；
+   - 面板手动新增一个 1-2 分钟后的日程 → 到点系统通知弹出；**点通知 → 主窗口切到日程 tab**；
+   - 「周报完成了」→ 面板勾上；「把明天所有提醒取消」→ 明天列表清空；
+   - 对话问「我明天有什么安排」→ 回复总结相关日程；
+   - 面板手动增删/勾选 → 对话查询实时一致（eventChanged）；
+   - 重启后已过期未触发的日程标「已过期」**不补弹**；有未触发日程时退出 → 弹退出提示通知；
+   - 时间非法表达 → 模型追问一次，不写脏数据。
+7. 通过后：`git tag m1 m2 m3`。
 
-**② 下一步候选（阶段 5 暂缓，用户 2026-09-27 决定；以下为阶段 5 开工要点备查，恢复时直接用）**：`core/calendar` + `events` 表（迁移 v3）、意图扩展 `schedule_add/done/cancel/query`（§5.1 prompt 加四个 intent + remind_at ISO 换算与合法性校验 + 一次追问）、`main/notify-loop.ts`（30s 轮询 → Notification → fired=1；退出前提示未触发日程）、日程面板（今天/明天/全部、勾选完成、手动增删）。
+**② 阶段 5 已完成（`75876c5`，暂缓后同日恢复）**：迁移 v3 events 表、意图 schedule_*、notify-loop、CalendarPanel 均已落地（详见 §4）。
 
-**注意事项**：阶段 5 日程**暂缓**（用户决定）；通道选择遗留：`gateway:getState/configure/state` 通道名不在 IPC 常量表（兼容保留）、api.apiKey 明文（阶段 6 DPAPI 一并处理）；意图 prompt 目前只有 remember/forget/chat（schedule 词刻意未出现，阶段 5 加入）；空闲抽取是全局单例 5min 定时器；面板列表 limit=200 无分页；`.pi/` 已入 .gitignore；生成中切走再切回占位为空、bundle >500kB 等阶段 3 遗留仍有效；`electron-builder.yml` 已设 `npmRebuild: false`，阶段 6 打包需补 extraResources（红图标+网关二进制）。
+**注意事项**：通道选择遗留：`gateway:getState/configure/state` 通道名不在 IPC 常量表（兼容保留）、api.apiKey 明文（阶段 6 DPAPI 一并处理）；done/cancel 匹配依赖 title LIKE 关键词（模型分词质量影响命中）；通知单次触发（构造异常也 markFired 防刷屏）；空闲抽取是全局单例 5min 定时器；面板列表 limit 无分页（memory 200/events 500）；`.pi/` 已入 .gitignore；生成中切走再切回占位为空、bundle >500kB 等阶段 3 遗留仍有效；`electron-builder.yml` 已设 `npmRebuild: false`，阶段 6 打包需补 extraResources（红图标+网关二进制）。
 
 ## 6. 交接简区
 
-- 编号：**H5**（H1-H4 已完成归档）
+- 编号：**H6**（H1-H5 已完成归档）
 - 源对话：本机 Pi 会话
-- 状态：阶段 4 + 通道选择代码完成（97 测试绿 + 零登录烟测通过），待 GUI 验收后打 m1/m2；下一步由用户定（恢复阶段 5 或阶段 6）
+- 状态：阶段 2/3/4/5 + 通道选择全部代码完成（137 测试绿 + 启动零登录/迁移烟测通过），待 GUI 验收后打 m1/m2/m3；剩阶段 6 打包硬化
