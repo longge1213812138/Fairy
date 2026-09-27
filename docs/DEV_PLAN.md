@@ -371,3 +371,22 @@ CREATE TABLE kv(k TEXT PRIMARY KEY, v TEXT);
 1. `reference/deepseek-pp/README.md` 的"核心功能/记忆系统"段——确认交互命名一致；
 2. `reference/deepseek-pp/AGENTS.md` 中 schema migration 与 automation lease 两段（MVP 只保留 schema 一条规则）；
 3. `reference/deepseek-pp/core/deepseek/contracts.ts` 与 `request-codec.ts` 路由表（仅当将来做自建网关时精读，当前阶段 1 用现成 sidecar，**可跳过**）。
+
+---
+
+## 附录 C：本机开发环境备忘（阶段 0 实测）
+
+1. **Node**：系统默认 Node 24.14.0 不在 npm 支持区间；新版 Node 24.21.0 装在 `C:\Users\91533\.fairy-tools\node24\node-v24.21.0-win-x64`（已置于用户 PATH 最前，新终端生效；pnpm 全局装在该 node 目录下，`pnpm.cmd` 可直接调）。
+2. **`ELECTRON_RUN_AS_NODE=1` 陷阱**（重点）：部分开发终端环境会继承该变量——electron 会退化为纯 Node 运行：`require('electron')` 返回二进制路径字符串、无 GUI、无 API，症状极难排查。`pnpm dev` 脚本已内置 `set ELECTRON_RUN_AS_NODE=`；手动跑 electron 二进制时也要 unset。
+3. **网络**：github.com 直连不通；electron 二进制与 electron-builder 工具走镜像：`ELECTRON_MIRROR=https://registry.npmmirror.com/-/binary/electron/`、`ELECTRON_BUILDER_BINARIES_MIRROR=https://registry.npmmirror.com/-/binary/electron-builder-binaries/`。本机 HTTPS 走代理 MITM，node 侧需 `NODE_OPTIONS=--use-system-ca`。
+4. **打包命令**（electron-builder 会探测 pnpm 路径，需先让新 node 进 PATH）：
+   ```bat
+   set PATH=C:\Users\91533\.fairy-tools\node24\node-v24.21.0-win-x64;%PATH%
+   set ELECTRON_RUN_AS_NODE=
+   set NODE_OPTIONS=--use-system-ca
+   set ELECTRON_MIRROR=https://registry.npmmirror.com/-/binary/electron/
+   set ELECTRON_BUILDER_BINARIES_MIRROR=https://registry.npmmirror.com/-/binary/electron-builder-binaries/
+   pnpm package:win
+   ```
+5. `reference/deepseek-pp` 是嵌套 git 仓库（gitlink），仅为本地参考，不参与 Fairy 构建。
+6. 阶段 0 产物：`pnpm dev` 窗口+托盘正常；`release/Fairy Setup 0.0.1.exe`（NSIS，94MB）已验证可生成。
