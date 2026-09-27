@@ -71,7 +71,7 @@
 └────────┼───────────────────────────────────────────────────┘
          ▼
   LLM 网关 sidecar（阶段 1：ds-free-api / deeperseeker，外部进程）
-         │  网页会话 = 浏览器登录 cookie（PoW 等由网关内部处理）
+         │  网页会话 = 账号池凭据（网关自动登录，PoW 等由网关内部处理）
          ▼
   chat.deepseek.com（免费网页额度）
 ```
@@ -208,12 +208,12 @@ system: 「从以下对话中抽取值得长期记住的信息：用户偏好、
 
 ### 5.5 登录引导流（F7）
 
-1. **触发**：首次启动、或 LLM 客户端捕获"会话过期"特征错误（阶段 1 记录好的报错指纹）→ 托盘红色 + 设置页弹卡。
-2. **步骤**（设置页内图文引导，每步一个按钮）：
-   - a. `shell.openExternal('https://chat.deepseek.com')` 用系统浏览器登录；
-   - b. 指引按 F12 → Network → 刷新 → 任一请求 → 复制 Request Headers 里的 `cookie` 整行（说明文字 + 可复制的占位框；MVP 手动粘贴，不做自动读 Chrome cookie，避免浏览器版本兼容坑）；
-   - c. 粘贴 → 写入配置 → 重启 sidecar → `GET /v1/health` 探活成功 → 完成。
-3. **配置存放**：`%APPDATA%/fairy/config.json`（MVP 明文 + 文件权限；硬化阶段再上 DPAPI，见 §8）。
+1. **触发**：首次启动、或 LLM 客户端命中会话过期指纹（持续 429 `overloaded`，见 `docs/llm-bridge-notes.md` §4）、或网关日志登录失败扫描（`RISK_DEVICE_DETECTED` / `USER_IS_BANNED` / `user is muted`）→ 托盘红色 + 设置页弹引导卡。
+2. **步骤**（设置页内图文引导，每步一个按钮；账号池版，不再收 cookie）：
+   - a. `shell.openExternal('https://chat.deepseek.com')` 用系统浏览器打开页面（取设备指纹用，**无需登录**）；
+   - b. F12 → Console 执行 `copy(SMSdk.getDeviceId())` 复制设备指纹（设备级，同机器多账号可复用，一次获取长期有效，见 `llm-bridge-notes` §1）；
+   - c. 填写账号（邮箱/手机号）/密码/device_id → 写配置 → 重启 sidecar → `GET /health` 探活 + 测试对话 → 完成。
+3. **配置存放**：`%APPDATA%/fairy/config.json`（MVP 明文 + 文件权限；硬化阶段再上 DPAPI，见 §8；保护对象 = 账号 + 密码 + device_id）。
 
 ---
 
@@ -231,12 +231,12 @@ system: 「从以下对话中抽取值得长期记住的信息：用户偏好、
 ### 阶段 1：LLM 桥接通（0.5-1 天）★先打通
 
 1. 二选一跑起来（**只需支持流式 chat completion，不要求 tools**，门槛大幅降低）：
-   - ds-free-api（Rust 单文件）：浏览器 F12 复制 deepseek.com 的 cookie → 写进配置文件 → `ds-free-api -c config.toml` → 监听 `127.0.0.1:8080`；
+   - ds-free-api（Rust 单文件）：账号池（邮箱/手机号 + 密码 + device_id）自动登录，写进配置 `[[ds_core.accounts]]` 段 → `ds-free-api -c config.toml` → 监听 `127.0.0.1:22217`；（v0.2.11 起不再收 cookie，详见 docs/llm-bridge-notes.md §1）；
    - deeperseeker（Python）：按其 README 注入 cookie → `:8000/v1`。
 2. curl 验证：
 
    ```bash
-   curl -N http://127.0.0.1:8080/v1/chat/completions \
+   curl -N http://127.0.0.1:22217/v1/chat/completions \
      -H 'Content-Type: application/json' \
      -d '{"model":"default","stream":true,
           "messages":[{"role":"user","content":"一句话说说你是谁"}]}'
@@ -248,11 +248,11 @@ system: 「从以下对话中抽取值得长期记住的信息：用户偏好、
 
 ### 阶段 2：sidecar 化 + 登录引导流（1-2 天）
 
-1. `main/sidecar.ts`：Fairy 启动时 `spawn` 网关（端口随机、配置含 cookie），退出时 kill 并回收（防 Windows 僵尸进程）；health 轮询。
+1. `main/sidecar.ts`：Fairy 启动时 `spawn` 网关（端口随机、配置含账号凭据（账号/密码/device_id）），退出时 kill 并回收（防 Windows 僵尸进程）；health 轮询（`GET /health`）。
 2. `packages/core/llm`：OpenAI 兼容客户端——流式解析、`AbortController` 停止、4xx 指数退避重试（≤3）、**过期指纹匹配 → 抛 `SessionExpired` 事件**给 main。
-3. 设置页实现 5.5 引导流（粘贴 cookie → 写配置 → 重启 sidecar → 探活 → 完成态）。
+3. 设置页实现 5.5 引导流（填账号/device_id → 写配置 → 重启 sidecar → 探活 → 完成态）。
 
-**验收**：清掉旧进程场景：cookie 过期时托盘变红 + 设置页出引导卡，按引导重新粘贴后可继续对话。
+**验收**：清掉旧进程场景：会话过期/登录失败时托盘变红 + 设置页出引导卡，按引导重新保存账号凭据后可继续对话；验收手段：设置页「测试对话」按钮端到端探活（本阶段替代完整聊天 UI）。
 
 ### 阶段 3：会话系统 + 聊天 UI（2-3 天）
 
@@ -289,8 +289,8 @@ system: 「从以下对话中抽取值得长期记住的信息：用户偏好、
 ### 阶段 6：打包 + 硬化（1-2 天）
 
 1. NSIS（开机自启选项默认勾选）+ portable 单 EXE；`app.setLoginItemSettings` 生效。
-2. cookie 存 DPAPI（`@kingsu/windows-dpapi` 或自调 `CryptProtectData`），旧明文自动迁移。
-3. 日志（electron-log，滚动 7 天）+ 一键诊断导出（版本/系统信息，不含 cookie）。
+2. 账号凭据（账号 + 密码 + device_id）存 DPAPI（`@kingsu/windows-dpapi` 或自调 `CryptProtectData`），旧明文自动迁移。
+3. 日志（electron-log，滚动 7 天）+ 一键诊断导出（版本/系统信息，不含账号凭据）。
 4. （可选，以后再说）自建 LLM 网关替换 sidecar：参考 `reference/deepseek-pp/core/deepseek/{pow.ts,request-codec.ts,stream-codec.ts}`——**MVP 不排期**，仅在 sidecar 停更/被禁时启动。
 
 **验收**：干净虚拟机从安装到完成首次登录 < 10 分钟；开机自启后托盘自动出现且日程提醒不丢失（错过的标"已过期"不补弹）。
@@ -344,9 +344,9 @@ CREATE TABLE kv(k TEXT PRIMARY KEY, v TEXT);
 |---|---|
 | DeepSeek 网页改版导致 sidecar 失效 | LLM 层隔离，官方 API 兜底（设置页填 Key）；关注蓝本/社区；终极手段 = 阶段 6 的可选项（自建网关） |
 | 账号风控/封号 | 单机、单账号、低频（消息 ≈ 2 次调用）；全部数据本地化，封号后换通道数据不丢；UI 明示风险 |
-| cookie 过期无感知 | 过期指纹检测（§5.5）+ 托盘红色 + 引导流一键续 |
+| 账号凭据失效无感知 | 过期指纹（持续 429 `overloaded`）+ 网关日志登录失败扫描（RISK_DEVICE_DETECTED/USER_IS_BANNED/muted）→ 托盘红色 + 引导流一键重配（见 llm-bridge-notes §4） |
 | 意图误判写脏日程 | JSON 校验 + `remind_at` 合法性 + 确认语可一键撤销（"没有/取消了"再一句即回滚） |
-| 明文存 cookie（MVP） | 文件权限收敛 + 阶段 6 上 DPAPI |
+| 明文存账号凭据（MVP） | 文件权限收敛 + 阶段 6 上 DPAPI |
 | Electron 冷启动慢 | 主进程常驻托盘；浮窗窗口启动时预建隐藏（show 即出） |
 | 关着 Fairy 日程错过 | 退出前提示 + 重开时过期日程标"已过期"（不补弹，避免惊吓） |
 

@@ -1,5 +1,6 @@
 import { APP_NAME, FAIRY_VERSION } from '@fairy/core'
 import { useState } from 'react'
+import SettingsTab from './SettingsTab'
 
 type Tab = 'chat' | 'calendar' | 'memory' | 'settings'
 
@@ -28,7 +29,7 @@ function App() {
             </button>
           ))}
         </nav>
-        <span className="version">v{FAIRY_VERSION} · 阶段 0 骨架</span>
+        <span className="version">v{FAIRY_VERSION} · 阶段 2</span>
       </header>
 
       <main className="content">
@@ -50,12 +51,7 @@ function App() {
             <p>FTS5 自动沉淀与注入将在<strong>阶段 4</strong>实现（§5.2）。</p>
           </div>
         )}
-        {tab === 'settings' && (
-          <div className="placeholder">
-            <h2>设置</h2>
-            <p>DeepSeek 登录引导流（粘贴 cookie → 探活）将在<strong>阶段 2</strong>实现（§5.5）。</p>
-          </div>
-        )}
+        {tab === 'settings' && <SettingsTab />}
       </main>
     </div>
   )

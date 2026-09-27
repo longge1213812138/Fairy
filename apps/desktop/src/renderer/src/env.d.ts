@@ -1,4 +1,4 @@
-export {}
+import type { FairyApi } from '@fairy/core'
 
 declare module '*.css' {
   const css: string
@@ -7,9 +7,9 @@ declare module '*.css' {
 
 declare global {
   interface Window {
-    fairy: {
-      name: string
-      version: string
-    }
+    /** preload 暴露的 IPC 面（契约见 packages/core/src/ipc.ts）+ 应用元信息 */
+    fairy: FairyApi & { name: string; version: string }
   }
 }
+
+export {}

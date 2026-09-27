@@ -74,3 +74,181 @@ body {
   max-width: 480px;
   line-height: 1.7;
 }
+
+/* ===== 设置页 · DeepSeek 账号引导流（阶段 2） ===== */
+
+.settings {
+  max-width: 620px;
+}
+
+/* 状态卡：绿 #16a34a / 红 #dc2626 / 黄 #d97706 / 中性灰 */
+.status-card {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.status-card .card-title {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.status-card .card-hint {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.85;
+}
+.status-card .card-detail {
+  margin: 0;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow: auto;
+}
+.card-green {
+  background: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.4);
+  color: #16a34a;
+}
+.card-red {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.4);
+  color: #dc2626;
+}
+.card-yellow {
+  background: rgba(217, 119, 6, 0.08);
+  border-color: rgba(217, 119, 6, 0.4);
+  color: #d97706;
+}
+.card-neutral {
+  background: rgba(107, 114, 128, 0.08);
+  border-color: rgba(107, 114, 128, 0.3);
+  color: #4b5563;
+}
+
+/* 引导步骤列表 */
+.steps {
+  padding-left: 20px;
+  margin-top: 16px;
+}
+.steps > li {
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.steps > li strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.steps > li > p {
+  margin: 6px 0;
+  font-size: 13px;
+  opacity: 0.8;
+}
+.steps-done { margin-top: 8px; }
+
+/* 按钮（通用） */
+.btn {
+  border: 1px solid rgba(107, 114, 128, 0.5);
+  background: transparent;
+  color: inherit;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.btn:hover:not(:disabled) {
+  border-color: #4f46e5;
+  color: #4f46e5;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  color: #fff;
+  opacity: 0.9;
+}
+
+/* 步骤二：指纹命令 + 复制 */
+.cmd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cmd-row .cmd {
+  flex: 1;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  background: rgba(107, 114, 128, 0.1);
+  border: 1px solid rgba(107, 114, 128, 0.3);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+.cmd-row .btn { margin-top: 0; }
+
+/* 步骤三：账号表单 */
+.setting-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.setting-form label {
+  display: block;
+  font-size: 12px;
+  opacity: 0.65;
+  margin-bottom: 2px;
+}
+.setting-form input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid rgba(107, 114, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+}
+.setting-form input:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+.setting-form .btn { margin-top: 0; }
+
+/* 保存 / 测试的内联结果 */
+.inline-msg {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+.msg-ok { color: #16a34a; }
+.msg-err { color: #dc2626; }
+
+/* 步骤四：测试对话 */
+.test-block { margin-top: 10px; }
+.test-row {
+  display: flex;
+  gap: 8px;
+}
+.test-input {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid rgba(107, 114, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+}
+.test-input:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+.test-row .btn { margin-top: 0; }
+

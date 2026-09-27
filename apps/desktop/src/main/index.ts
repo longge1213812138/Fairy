@@ -1,6 +1,12 @@
 import { app, shell, BrowserWindow, Tray, Menu, nativeImage, Notification } from 'electron'
 import { join } from 'node:path'
 import { APP_NAME, FAIRY_VERSION } from '@fairy/core'
+import { initUserDataPath } from './config'
+import { initSidecar, shutdownSidecar } from './sidecar'
+import { registerIpcHandlers, registerTray, sendStateOnFinishLoad } from './ipc'
+
+// DEV_PLAN §7：尽早把 userData 指到 %APPDATA%/fairy（小写 fairy），必须先于一切读取 userData 的逻辑
+initUserDataPath()
 
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -35,6 +41,9 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // 窗口加载完成晚于状态变化时补发一次网关状态
+  sendStateOnFinishLoad(win.webContents)
+
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   if (devUrl) {
     win.loadURL(devUrl)
@@ -47,6 +56,9 @@ function createTray(): void {
   const image = nativeImage.createFromPath(iconPath())
   tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image)
   tray.setToolTip(`${APP_NAME} v${FAIRY_VERSION}`)
+
+  // 托盘状态更新（红图标）逻辑注入 ipc.ts，保持本文件简洁
+  registerTray(tray)
 
   const autoStart = app.getLoginItemSettings().openAtLogin
 
@@ -64,7 +76,7 @@ function createTray(): void {
       click: () =>
         new Notification({
           title: APP_NAME,
-          body: `版本 ${FAIRY_VERSION}（阶段 0 骨架）`
+          body: `版本 ${FAIRY_VERSION}（阶段 2）`
         }).show()
     },
     { label: '退出', click: () => app.quit() }
@@ -73,7 +85,7 @@ function createTray(): void {
   tray.on('click', () => (win?.show() ?? createWindow()))
 }
 
-// 单实例锁：防止多开导致 sidecar/数据文件竞争（后续阶段的保护）
+// 单实例锁：防止多开导致 sidecar/数据文件竞争
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -81,11 +93,25 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     createWindow()
     createTray()
+    registerIpcHandlers()
+    initSidecar()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
   })
 }
+
+// 退出前停掉网关子进程（防 Windows 僵尸进程）；幂等防重入，3s 兜底超时在 shutdownSidecar 内
+let shuttingDown = false
+app.on('before-quit', (event) => {
+  if (shuttingDown) {
+    event.preventDefault()
+    return
+  }
+  shuttingDown = true
+  event.preventDefault()
+  shutdownSidecar().finally(() => app.exit())
+})
 
 app.on('window-all-closed', () => {
   // MVP：留在托盘常驻；阶段 6 再加"是否退出"逻辑
