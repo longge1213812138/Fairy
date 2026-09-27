@@ -2,7 +2,10 @@
  * renderer ⇄ main 的 IPC 边界（DEV_PLAN §6 阶段 2 + 阶段 3）。
  *
  * handlers：
- * - 阶段 2：gateway:getState / gateway:configure / gateway:testChat / app:openExternal
+ * - 阶段 2：gateway:getState / gateway:configure / app:openExternal
+ * - 通道选择（DEV_PLAN §5.6，通道名一律用 @fairy/core 的 IPC.channel* 常量）：
+ *   channel:get / channel:saveApi / channel:select / channel:start / channel:stop / channel:test
+ *   （channel:test 替代旧 gateway:testChat，按当前通道探活）
  * - 阶段 3：会话 CRUD 与聊天（通道名一律用 @fairy/core 的 IPC 常量，勿手写字符串）：
  *   session:list / session:create / session:remove / chat:history / chat:send / chat:stop
  * - 阶段 4：记忆面板：memory:list / memory:add / memory:update / memory:remove /
@@ -17,7 +20,14 @@ import { app, ipcMain, nativeImage, shell } from 'electron'
 import type { Tray } from 'electron'
 import { join } from 'node:path'
 import { IPC, APP_NAME, FAIRY_VERSION } from '@fairy/core'
-import type { GatewayAccountConfig, GatewayState, MemoryKind, MemoryListFilter } from '@fairy/core'
+import type {
+  ApiChannelConfig,
+  ChannelKind,
+  GatewayAccountConfig,
+  GatewayState,
+  MemoryKind,
+  MemoryListFilter
+} from '@fairy/core'
 import {
   createSession,
   getMemoryStore,
@@ -28,7 +38,15 @@ import {
   stopChat
 } from './chat'
 import { broadcast } from './windows'
-import { configureGateway, getGatewayState, onGatewayStateChanged, testChat } from './sidecar'
+import { configureGateway, getGatewayState, onGatewayStateChanged } from './sidecar'
+import {
+  channelTest,
+  getChannelState,
+  saveApi,
+  selectChannel,
+  startGatewayAction,
+  stopGatewayAction
+} from './channel'
 
 let tray: Tray | null = null
 let normalIcon: Electron.NativeImage | null = null
@@ -135,7 +153,14 @@ export function registerIpcHandlers(): void {
   // ===== 阶段 2：网关 / 外链 =====
   ipcMain.handle('gateway:getState', () => getGatewayState())
   ipcMain.handle('gateway:configure', (_event, input: GatewayAccountConfig) => configureGateway(input))
-  ipcMain.handle('gateway:testChat', (_event, message: string) => testChat(message))
+
+  // ===== 通道选择（DEV_PLAN §5.6；启动不自动登录，网页网关需显式 channel:start） =====
+  ipcMain.handle(IPC.channelGet, () => getChannelState())
+  ipcMain.handle(IPC.channelSaveApi, (_event, cfg: ApiChannelConfig) => saveApi(cfg))
+  ipcMain.handle(IPC.channelSelect, (_event, channel: ChannelKind) => selectChannel(channel))
+  ipcMain.handle(IPC.channelStart, () => startGatewayAction())
+  ipcMain.handle(IPC.channelStop, () => stopGatewayAction())
+  ipcMain.handle(IPC.channelTest, (_event, message: string) => channelTest(message))
 
   // 外链一律系统浏览器；只放行 http/https，其他协议 reject
   ipcMain.handle('app:openExternal', async (_event, url: unknown) => {

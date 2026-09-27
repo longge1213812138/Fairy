@@ -13,7 +13,7 @@
  * - 空闲抽取（§5.2 沉淀时机 2）：chatDone（ok 非中止）/再次发送 → 5 分钟单例定时器（extract.ts）。
  * - 广播统一走 windows.broadcast（主窗口 + 浮窗同步）。
  *
- * 依赖单向：chat → windows / sidecar / config / extract（均不回 import chat）。
+ * 依赖单向：chat → windows / sidecar / channel / extract（均不回 import chat）。
  * createSessionStore/SessionStore（阶段 3 任务 A）与 createIntentParser/createMemoryStore/
  * formatMemoryBlock/MEMORY_TOP_K（阶段 4 任务 A2）均为 @fairy/core 冻结签名。
  */
@@ -23,7 +23,6 @@ import {
   IPC,
   MEMORY_TOP_K,
   createIntentParser,
-  createLlmClient,
   createMemoryStore,
   createSessionStore,
   formatMemoryBlock,
@@ -39,10 +38,11 @@ import type {
   SessionMeta,
   SessionStore
 } from '@fairy/core'
+import { resolveActiveChannel } from './channel'
+import type { ActiveChannel } from './channel'
 import { createIdleExtractor } from './extract'
 import type { IdleExtractor } from './extract'
-import { loadConfig } from './config'
-import { getGatewayState, reportSessionExpired, reportSessionOk } from './sidecar'
+import { reportSessionExpired, reportSessionOk } from './sidecar'
 import { broadcast } from './windows'
 
 let store: SessionStore | null = null
@@ -67,12 +67,9 @@ export function initChat(): void {
     memoryStore,
     listHistory: (sessionId, limit) => listHistory(sessionId, limit),
     createClient: () => {
-      const gw = getGatewayState()
-      if (gw.status !== 'ready' || gw.port === null) return null
-      return createLlmClient({
-        baseUrl: `http://127.0.0.1:${gw.port}`,
-        apiKey: loadConfig().apiKey
-      })
+      // 抽取也走通道解析（api 通道同样可抽取）；通道不可用返回 null → 本次抽取跳过
+      const active = resolveActiveChannel()
+      return active.ok ? active.client : null
     },
     isBusy: () => active !== null,
     onChanged: () => broadcast(IPC.memoryChanged)
@@ -119,7 +116,7 @@ export function listHistory(sessionId: string, limit?: number): MessageDto[] {
 // ===== 发送 / 停止 =====
 
 /**
- * 校验（空消息 / 网关未就绪 / 已有生成中 / 会话不存在）→ 否则落库并启动生成。
+ * 校验（空消息 / 通道不可用（resolveActiveChannel） / 已有生成中 / 会话不存在）→ 否则落库并启动生成。
  * 返回 {ok:true} 只代表「已受理」；流式结果经 chat:delta / chat:done 事件推送。
  */
 export function sendChat(sessionId: string, text: string): Promise<{ ok: boolean; error?: string }> {
@@ -127,9 +124,10 @@ export function sendChat(sessionId: string, text: string): Promise<{ ok: boolean
     return Promise.resolve({ ok: false, error: '消息不能为空' })
   }
 
-  const gw = getGatewayState()
-  if (gw.status !== 'ready' || gw.port === null) {
-    return Promise.resolve({ ok: false, error: '网关未就绪，请先在设置页完成配置' })
+  // 通道解析（§5.6，替代旧「网关 ready」检查）：未选通道 / api 配置不全 / 网关未启动 → 引导文案
+  const resolved = resolveActiveChannel()
+  if (!resolved.ok) {
+    return Promise.resolve({ ok: false, error: resolved.error })
   }
   if (active) {
     return Promise.resolve({ ok: false, error: '正在生成回复…' })
@@ -152,7 +150,7 @@ export function sendChat(sessionId: string, text: string): Promise<{ ok: boolean
   reportSessionOk() // 消息成功进入生成流水 → 清会话过期标记（托盘联动）
 
   idleExtractor?.reset(sessionId) // 再次发送 → 重置空闲抽取倒计时（进行中的抽取取消）
-  void runGeneration(sessionId, messageId, text, gw.port, controller.signal)
+  void runGeneration(sessionId, messageId, text, resolved, controller.signal)
   return Promise.resolve({ ok: true })
 }
 
@@ -170,14 +168,12 @@ async function runGeneration(
   sessionId: string,
   messageId: number,
   text: string,
-  port: number,
+  /** 通道解析结果（{channel, client}）：client 不再内部从 port 重建，意图解析共用同一个 */
+  resolved: Extract<ActiveChannel, { ok: true }>,
   signal: AbortSignal
 ): Promise<void> {
   const s = requireStore()
-  const client = createLlmClient({
-    baseUrl: `http://127.0.0.1:${port}`,
-    apiKey: loadConfig().apiKey
-  })
+  const client = resolved.client
 
   // ===== DEV_PLAN §5.1 三步流水：① 意图 → ② 记忆动作 → ③ 检索注入 → 流式回复 =====
 

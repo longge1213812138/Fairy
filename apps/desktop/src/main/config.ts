@@ -1,7 +1,7 @@
 /**
  * 本地配置：%APPDATA%/fairy/config.json（DEV_PLAN §5.5 / §7）。
  *
- * 结构：{ gatewayBin?, apiKey, account? }，UTF-8 JSON，MVP 明文（阶段 6 上 DPAPI）。
+ * 结构：{ gatewayBin?, apiKey, account?, channel?, api? }，UTF-8 JSON，MVP 明文（阶段 6 上 DPAPI）。
  *
  * 并发/损坏策略：
  * - main 是单实例锁下的唯一写者；保存走 tmp + rename（同卷近原子），
@@ -12,7 +12,7 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
-import type { GatewayAccountConfig } from '@fairy/core'
+import type { ApiChannelConfig, ChannelKind, GatewayAccountConfig } from '@fairy/core'
 
 export interface FairyConfig {
   /** ds-free-api 网关二进制路径；空/缺 = 未找到（网关状态报「未找到网关二进制」） */
@@ -21,6 +21,10 @@ export interface FairyConfig {
   apiKey: string
   /** DeepSeek 账号池凭据（账号/密码/device_id） */
   account?: GatewayAccountConfig
+  /** 接入通道（DEV_PLAN §5.6）：'api' | 'web'；缺省/null = 尚未选择（设置页展示双通道选择卡） */
+  channel?: ChannelKind | null
+  /** OpenAI 兼容 API 供应商配置（baseUrl/apiKey/model；与网关用的 apiKey 字段不同名，嵌套无冲突）；缺省 = 未配置 */
+  api?: ApiChannelConfig
 }
 
 /** 本机已知 ds-free-api 安装目录（docs/llm-bridge-notes.md §2/§6，阶段 2 探测位 ②） */
@@ -95,6 +99,17 @@ function normalizeAccount(v: unknown): GatewayAccountConfig | undefined {
   return out
 }
 
+/** api 三字段（baseUrl/apiKey/model）全为非空字符串才认；缺一即「api 未配置」（configured=false） */
+function normalizeApi(v: unknown): ApiChannelConfig | undefined {
+  if (typeof v !== 'object' || v === null) return undefined
+  const o = v as Record<string, unknown>
+  const baseUrl = typeof o['baseUrl'] === 'string' ? o['baseUrl'].trim() : ''
+  const apiKey = typeof o['apiKey'] === 'string' ? o['apiKey'].trim() : ''
+  const model = typeof o['model'] === 'string' ? o['model'].trim() : ''
+  if (baseUrl === '' || apiKey === '' || model === '') return undefined
+  return { baseUrl, apiKey, model }
+}
+
 function normalizeConfig(raw: unknown): FairyConfig | null {
   if (typeof raw !== 'object' || raw === null) return null
   const o = raw as Record<string, unknown>
@@ -103,6 +118,9 @@ function normalizeConfig(raw: unknown): FairyConfig | null {
   // apiKey 缺失/损坏就补一个新的（网关 401 时重新保存配置也能恢复）
   cfg.apiKey = typeof o['apiKey'] === 'string' && o['apiKey'] !== '' ? o['apiKey'] : newApiKey()
   cfg.account = normalizeAccount(o['account'])
+  // channel 只接受 'api'/'web'，其余（含缺省/坏值）一律 null = 尚未选择
+  cfg.channel = o['channel'] === 'api' || o['channel'] === 'web' ? o['channel'] : null
+  cfg.api = normalizeApi(o['api'])
   return cfg
 }
 
@@ -122,8 +140,8 @@ export function loadConfig(): FairyConfig {
       /* 备份失败则保持现状（重建会原子覆盖） */
     }
   }
-  // 首启自动创建
-  const cfg: FairyConfig = { gatewayBin: probeGatewayBin(), apiKey: newApiKey() }
+  // 首启自动创建（§5.6：channel 缺省 null，不默认任何通道；api 缺省 = configured:false）
+  const cfg: FairyConfig = { gatewayBin: probeGatewayBin(), apiKey: newApiKey(), channel: null }
   const migrated = migrateFromGatewayToml()
   if (migrated) cfg.account = migrated
   saveConfig(cfg)

@@ -215,6 +215,16 @@ system: 「从以下对话中抽取值得长期记住的信息：用户偏好、
    - c. 填写账号（邮箱/手机号）/密码/device_id → 写配置 → 重启 sidecar → `GET /health` 探活 + 测试对话 → 完成。
 3. **配置存放**：`%APPDATA%/fairy/config.json`（MVP 明文 + 文件权限；硬化阶段再上 DPAPI，见 §8；保护对象 = 账号 + 密码 + device_id）。
 
+### 5.6 通道选择（OpenAI 兼容 API / DeepSeek 网页）
+
+1. **启动不自动登录（硬规则）**：应用启动不 spawn 网关、不发生任何 DeepSeek 网页登录；是否联网、走哪条通道由用户在设置页显式决定。
+2. **通道持久化**：`config.json` 增加 `channel: 'api' | 'web' | null` 与 `api: { baseUrl, apiKey, model }`。
+   - `channel = null`（首启/本节上线后升级）→ 设置页展示双通道选择卡：
+   - **OpenAI 兼容 API**：baseUrl（默认 `https://api.deepseek.com/v1`）+ API Key + model（默认 `deepseek-chat`）→ 保存即启用；聊天/意图/抽取全部直连该端点，不启动网关（可接官方 DeepSeek API 或任意 OpenAI 兼容端点）。
+   - **DeepSeek 网页**：走 §5.5 账号引导流；选中后需点击「启动网关」才 spawn+登录，**每次启动 Fairy 均需手动点一次**（启动后会话期间保持运行）。
+3. **切换规则**：切到 api 会自动停止运行中的网页网关（避免后台登录）；切回 web 不自动启动；已在运行时保存账号 → 网关热重启应用新配置。
+4. **测试对话按当前通道执行**；会话过期指纹（§5.5 / llm-bridge-notes §4，持续 429 overloaded）仅对网页通道生效，API 通道的 429 走常规退避。
+
 ---
 
 ## 6. 分阶段实施步骤

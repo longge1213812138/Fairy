@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { APP_NAME, FAIRY_VERSION, IPC } from '@fairy/core'
 import type {
+  ApiChannelConfig,
+  ChannelActionResult,
+  ChannelKind,
+  ChannelState,
   ChatBusyEvent,
   ChatDeltaEvent,
   ChatDoneEvent,
@@ -41,9 +45,19 @@ contextBridge.exposeInMainWorld(
     gateway: {
       getState: (): Promise<GatewayState> => ipcRenderer.invoke('gateway:getState'),
       configure: (input: GatewayAccountConfig): Promise<ConfigureResult> =>
-        ipcRenderer.invoke('gateway:configure', input),
-      testChat: (message: string): Promise<TestChatResult> =>
-        ipcRenderer.invoke('gateway:testChat', message)
+        ipcRenderer.invoke('gateway:configure', input)
+    },
+
+    // ===== 通道选择（DEV_PLAN §5.6；test 替代旧 gateway.testChat，按当前通道探活） =====
+    channel: {
+      get: (): Promise<ChannelState> => ipcRenderer.invoke(IPC.channelGet),
+      saveApi: (cfg: ApiChannelConfig): Promise<ChannelActionResult> =>
+        ipcRenderer.invoke(IPC.channelSaveApi, cfg),
+      select: (channel: ChannelKind): Promise<ChannelActionResult> =>
+        ipcRenderer.invoke(IPC.channelSelect, channel),
+      startGateway: (): Promise<ChannelActionResult> => ipcRenderer.invoke(IPC.channelStart),
+      stopGateway: (): Promise<ChannelState> => ipcRenderer.invoke(IPC.channelStop),
+      test: (message: string): Promise<TestChatResult> => ipcRenderer.invoke(IPC.channelTest, message)
     },
 
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),

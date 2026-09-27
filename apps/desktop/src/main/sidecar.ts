@@ -1,39 +1,36 @@
 /**
- * LLM 网关 sidecar 生命周期管理（DEV_PLAN §6 阶段 2）。
+ * LLM 网关 sidecar 生命周期管理（DEV_PLAN §6 阶段 2 + §5.6 通道选择）。
  *
+ * - **启动不自启（§5.6 硬规则）**：initSidecar() 只建目录——不创建 manager、不 spawn、不登录；
+ *   网关仅在用户于设置页显式「启动网关」（channel:start → startGatewayAction → startGateway）时拉起，
+ *   每次启动 Fairy 均需手动点一次（§5.6.2）。
  * - 用 @fairy/core 的 createGatewayManager 托管 ds-free-api 子进程；
  *   configPath = <userData>/gateway/config.toml，dataDir = <userData>/gateway-data。
  * - getGatewayState() 是唯一状态出口（snapshot → GatewayState 映射 + 派生规则），
- *   ipc.ts / 托盘都从这里取数。
- * - 二进制缺失 / 未配置账号时不 spawn，维护固定的 error snapshot（语义见 initSidecar 注释）。
+ *   ipc.ts / channel.ts / 托盘都从这里取数。
  * - 状态变化通过 onGatewayStateChanged 注入的监听器广播（由 ipc.ts 注册，
- *   避免 ipc.ts ↔ sidecar.ts 循环 import）。
+ *   避免 ipc.ts ↔ sidecar.ts 循环 import）；manager 出现后经 onState 转发。
+ * - 依赖单向：sidecar → config / core（不 import channel / chat，无环）。
  */
 import { app } from 'electron'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  createGatewayManager,
-  createLlmClient,
-  LlmAuthError,
-  SessionExpiredError,
-} from '@fairy/core'
+import { createGatewayManager } from '@fairy/core'
 import type {
   ConfigureResult,
   GatewayAccountConfig,
   GatewayManager,
   GatewaySnapshot,
   GatewayState,
-  TestChatResult,
 } from '@fairy/core'
 import { loadConfig, saveConfig } from './config'
 
 let manager: GatewayManager | null = null
+/** manager.onState 退订函数（换 manager 时先退订，防双监听） */
+let unsubscribeManager: (() => void) | null = null
 let inited = false
-/** testChat 命中会话过期指纹（持续 429 overloaded）置 true；configure 成功 / testChat 成功清 false */
+/** channel.test / 聊天命中会话过期指纹（持续 429 overloaded）置 true；configure 成功 / 任一成功调用清 false */
 let lastTestExpired = false
-/** 二进制缺失 / 未配置账号时不 spawn：维护固定 error snapshot，getGatewayState 优先用它 */
-let fallbackSnapshot: GatewaySnapshot | null = null
 
 type StateListener = (state: GatewayState) => void
 let stateListener: StateListener | null = null
@@ -54,10 +51,11 @@ function emitState(): void {
 }
 
 /**
- * 会话过期标记的两个公开入口（阶段 3：聊天流水与 testChat 共用，语义一致）：
- * - reportSessionExpired：聊天命中 SessionExpiredError / testChat 命中过期指纹 → 置 true 并 emit
+ * 会话过期标记的两个公开入口（聊天流水与 channel.test 共用，语义一致）：
+ * - reportSessionExpired：聊天命中 SessionExpiredError / channelTest 命中过期指纹 → 置 true 并 emit
  * - reportSessionOk：configure 成功 / 任一成功调用 → 清 false 并 emit
  * emit 后由 ipc.ts 注册的监听器去抖广播 gateway:state + setTrayState（托盘红联动）。
+ * （派生规则仅网页通道有值——API 通道不经过网关，见 getGatewayState。）
  */
 export function reportSessionExpired(): void {
   lastTestExpired = true
@@ -69,89 +67,100 @@ export function reportSessionOk(): void {
   emitState()
 }
 
-/** whenReady 调用。幂等。 */
+/**
+ * whenReady 调用。幂等。
+ * §5.6.1：只做目录创建——**不创建 manager、不 spawn 网关、不发生任何 DeepSeek 登录**；
+ * onStateChanged 监听注册机制保留（manager 由 startGateway 出现后绑定转发）。
+ */
 export function initSidecar(): void {
   if (inited) return
   inited = true
-
   const userData = app.getPath('userData')
-  const configPath = join(userData, 'gateway', 'config.toml')
-  const dataDir = join(userData, 'gateway-data')
   mkdirSync(join(userData, 'gateway'), { recursive: true })
-  mkdirSync(dataDir, { recursive: true })
+  mkdirSync(join(userData, 'gateway-data'), { recursive: true })
+}
 
-  const cfg = loadConfig()
-  const binPath = cfg.gatewayBin ?? ''
-  const hasBin = binPath !== '' && existsSync(binPath)
-
-  manager = createGatewayManager({
-    binPath,
-    configPath,
-    dataDir,
-    apiKey: cfg.apiKey,
-    account: cfg.account ?? null,
-  })
-
-  manager.onState(() => {
-    // manager 开始出真实状态（启动 / reconfigure 触发）→ 废弃 fallback，跟随 manager
-    fallbackSnapshot = null
-    emitState()
-  })
-
-  if (!hasBin) {
-    // 语义：二进制缺失 → 不 spawn，网关永远 error，提示用户放置 ds-free-api.exe
-    fallbackSnapshot = {
-      status: 'error',
-      port: null,
-      accountStatus: 'none',
-      accountDetail: null,
-      lastError: '未找到网关二进制',
-    }
-    return
-  }
-  if (!cfg.account) {
-    // 语义：未配置账号（首启用户走 §5.5 引导流）→ 不 spawn 避免空账号池无意义登录
-    fallbackSnapshot = {
-      status: 'error',
-      port: null,
-      accountStatus: 'none',
-      accountDetail: null,
-      lastError: '未配置账号',
-    }
-    return
-  }
-
-  // 不 await：不阻塞 whenReady；失败由 getSnapshot() 体现，catch 仅防 unhandledRejection
-  void manager
-    .start()
-    .catch((err: unknown) => {
-      fallbackSnapshot = {
-        status: 'error',
-        port: null,
-        accountStatus: 'none',
-        accountDetail: null,
-        lastError: `网关启动失败：${errMsg(err)}`,
-      }
-      emitState()
-    })
+/** 网关是否在运行（starting/ready = 子进程存活；stopped/error = 未运行） */
+function isRunning(): boolean {
+  const status = manager?.getSnapshot().status
+  return status === 'starting' || status === 'ready'
 }
 
 /**
- * snapshot → GatewayState（ipc / 托盘的唯一取数口）。
+ * 显式启动网关（§5.6.2 网页通道：「启动网关」按钮 → spawn + 登录）。
+ * - 前置：网关二进制存在（否则 '未找到网关二进制'）、账号已配置（否则 '请先完成 DeepSeek 账号配置'）；
+ * - 旧 manager 若存在先 stop() 并退订（防双监听/双进程），再按当前配置构建全新 manager；
+ * - await manager.start() → 按 snapshot 返回 ok（status ready）或 error（lastError/accountDetail 摘要）。
+ */
+export async function startGateway(): Promise<{ ok: boolean; error?: string }> {
+  const cfg = loadConfig()
+  const binPath = cfg.gatewayBin ?? ''
+  if (binPath === '' || !existsSync(binPath)) {
+    return { ok: false, error: '未找到网关二进制' }
+  }
+  if (!cfg.account) {
+    return { ok: false, error: '请先完成 DeepSeek 账号配置' }
+  }
+
+  // 旧 manager 先退订 + 停止（防双监听/双进程）
+  unsubscribeManager?.()
+  unsubscribeManager = null
+  const old = manager
+  manager = null
+  if (old) {
+    try {
+      await old.stop()
+    } catch (err) {
+      console.warn('[sidecar] 旧网关停止异常，继续启动：', errMsg(err))
+    }
+  }
+
+  const userData = app.getPath('userData')
+  const next = createGatewayManager({
+    binPath,
+    configPath: join(userData, 'gateway', 'config.toml'),
+    dataDir: join(userData, 'gateway-data'),
+    apiKey: cfg.apiKey,
+    account: cfg.account ?? null,
+  })
+  manager = next
+  unsubscribeManager = next.onState(() => emitState())
+
+  try {
+    const snap = await next.start()
+    emitState()
+    if (snap.status === 'ready') return { ok: true }
+    return { ok: false, error: snap.lastError ?? snap.accountDetail ?? '网关启动失败' }
+  } catch (err) {
+    emitState()
+    return { ok: false, error: `网关启动失败：${errMsg(err)}` }
+  }
+}
+
+/** 显式停止网关（幂等；manager 未建/未跑也安全）。停止后不删 manager（configure 热重启判活用 isRunning） */
+export async function stopGateway(): Promise<void> {
+  try {
+    await manager?.stop()
+  } finally {
+    emitState()
+  }
+}
+
+/**
+ * snapshot → GatewayState（ipc / channel / 托盘的唯一取数口）。
  * `configured` 来自 config.json 是否有 account；
+ * manager 未建/未跑时返回 {status:'stopped', port:null, accountStatus:'none'|沿用 snapshot, ...}；
  * 派生规则集中在本函数（注释）：lastTestExpired 且网关仍认为 logged_in
- * （会话过期只在请求时暴露）→ 降级 login_failed，驱动托盘红 + 引导卡。
+ * （会话过期只在请求时暴露）→ 降级 login_failed，驱动托盘红 + 引导卡（仅网页通道会有值）。
  */
 export function getGatewayState(): GatewayState {
-  const snap =
-    fallbackSnapshot ??
-    manager?.getSnapshot() ?? {
-      status: 'stopped',
-      port: null,
-      accountStatus: 'none',
-      accountDetail: null,
-      lastError: null,
-    }
+  const snap: GatewaySnapshot = manager?.getSnapshot() ?? {
+    status: 'stopped',
+    port: null,
+    accountStatus: 'none',
+    accountDetail: null,
+    lastError: null,
+  }
   const configured = loadConfig().account !== undefined
 
   const state: GatewayState = {
@@ -170,7 +179,13 @@ export function getGatewayState(): GatewayState {
   return state
 }
 
-/** 保存账号配置 → 重启 sidecar；deviceId 为空不阻断，但提示 RISK_DEVICE_DETECTED 风险 */
+/**
+ * gateway:configure 的实现：校验 + 保存 config.json →
+ * **网关运行中（isRunning）→ manager.reconfigure({ account }) 热重启应用新配置；
+ * 未运行则仅保存，绝不启动**（§5.6.3：登录只发生在用户显式「启动网关」）。
+ * 返回的 ConfigureResult.state 照旧 getGatewayState()。
+ * deviceId 为空不阻断，但提示 RISK_DEVICE_DETECTED 风险。
+ */
 export async function configureGateway(input: GatewayAccountConfig): Promise<ConfigureResult> {
   if (
     !input ||
@@ -197,16 +212,16 @@ export async function configureGateway(input: GatewayAccountConfig): Promise<Con
   } catch (err) {
     return {
       ok: false,
-      error: `配置写入失败：${err instanceof Error ? err.message : String(err)}`,
+      error: `配置写入失败：${errMsg(err)}`,
     }
   }
 
   reportSessionOk() // configure 成功 → 清过期标记并刷新状态
 
   try {
-    if (manager) {
+    if (manager && isRunning()) {
+      // 运行中改账号 → 热重启应用（§5.6.3）；未运行仅上面的保存，不启动
       await manager.reconfigure({ account })
-      fallbackSnapshot = null // reconfigure 后跟随 manager 快照
     }
     const state = getGatewayState()
     if (!account.deviceId) {
@@ -221,42 +236,6 @@ export async function configureGateway(input: GatewayAccountConfig): Promise<Con
       error: state.lastError ?? state.accountDetail ?? String(err),
       state,
     }
-  }
-}
-
-/** 设置页「测试对话」端到端探活：直连网关 /v1/chat/completions（非流式） */
-export async function testChat(message: string): Promise<TestChatResult> {
-  const state = getGatewayState()
-  if (state.status !== 'ready' || state.port === null) {
-    return { ok: false, error: '网关未就绪' }
-  }
-  if (typeof message !== 'string' || message.trim() === '') {
-    return { ok: false, error: '消息为空' }
-  }
-
-  const cfg = loadConfig()
-  const client = createLlmClient({
-    baseUrl: `http://127.0.0.1:${state.port}`,
-    apiKey: cfg.apiKey,
-  })
-
-  try {
-    const res = await client.chatOnce([{ role: 'user', content: message }])
-    reportSessionOk() // testChat 成功 → 清过期标记
-    return { ok: true, content: res.content }
-  } catch (err) {
-    if (err instanceof SessionExpiredError) {
-      reportSessionExpired()
-      return {
-        ok: false,
-        expired: true,
-        error: '会话已过期（持续 429 overloaded），请重新保存账号配置',
-      }
-    }
-    if (err instanceof LlmAuthError) {
-      return { ok: false, error: `API Key 无效：${errMsg(err)}` }
-    }
-    return { ok: false, error: errMsg(err) }
   }
 }
 

@@ -9,7 +9,8 @@
  * - 成功 add ≥1 条 → onChanged（chat.ts 注入 → broadcast IPC.memoryChanged）。
  * - 退出安全：定时器 unref?.()；shutdown() 清定时器 + 取消进行中的抽取（chat.ts shutdownChat → before-quit）。
  *
- * 依赖单向：extract 不回 import chat（依赖经 createIdleExtractor 注入）。
+ * 依赖单向：extract 不回 import chat（依赖经 createIdleExtractor 注入；createClient 由 chat.ts
+ * 用 channel.ts 的 resolveActiveChannel 提供，api 通道也能抽取，无环）。
  */
 import type { LlmClient, MemoryKind, MemoryStore, MessageDto } from '@fairy/core'
 
@@ -31,7 +32,7 @@ export interface IdleExtractionDeps {
   memoryStore: Pick<MemoryStore, 'add'>
   /** 目标会话最近 N 条消息（升序） */
   listHistory(sessionId: string, limit: number): MessageDto[]
-  /** 网关未就绪返回 null → 本次抽取跳过 */
+  /** 通道不可用（未选通道/网关未启动等）返回 null → 本次抽取跳过 */
   createClient(): LlmClient | null
   /** 生成中（active 非空）→ 到点顺延 */
   isBusy(): boolean
@@ -118,7 +119,7 @@ export function createIdleExtractor(deps: IdleExtractionDeps): IdleExtractor {
     const sessionId = targetSessionId
     if (!sessionId) return
     const client = deps.createClient()
-    if (!client) return // 网关未就绪：静默跳过，等下一次 done 重置
+    if (!client) return // 通道不可用：静默跳过，等下一次 done 重置
 
     const messages = deps
       .listHistory(sessionId, 20)
