@@ -1,7 +1,7 @@
 /**
  * 阶段 3 任务 A：SQLite 存储层（单文件库 + 确定性幂等迁移）。
  *
- * 表结构严格按 docs/DEV_PLAN.md §7（v1 会话/消息/kv，v2 记忆 + FTS5）；迁移沿用蓝本 invariant：
+ * 表结构严格按 docs/DEV_PLAN.md §7（v1 会话/消息/kv，v2 记忆 + FTS5，v3 日程 events）；迁移沿用蓝本 invariant：
  * - migrations 全部 IF NOT EXISTS 幂等执行；
  * - kv.schema_version 记录当前版本；
  * - db 版本 > 已知版本 → 抛错 fail-visible，绝不写覆盖用户数据；
@@ -69,6 +69,24 @@ export const migrations: Migration[] = [
             INSERT INTO memory_fts(memory_fts, rowid, content) VALUES ('delete', old.id, old.content);
             INSERT INTO memory_fts(rowid, content) VALUES (new.id, new.content);
           END;
+        `);
+      })();
+    }
+  },
+  {
+    version: 3,
+    up(db) {
+      // §7 events（日程）+ remind_at 索引（通知轮询 / dueEvents 按时间查）
+      db.transaction(() => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS events(
+            id INTEGER PRIMARY KEY,
+            title TEXT, notes TEXT,
+            remind_at INT,
+            done INT DEFAULT 0, fired INT DEFAULT 0,
+            created_at INT
+          );
+          CREATE INDEX IF NOT EXISTS idx_events_remind ON events(remind_at);
         `);
       })();
     }

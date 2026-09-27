@@ -1,6 +1,7 @@
 import { APP_NAME, FAIRY_VERSION, QUICK_SESSION_ID } from '@fairy/core'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import SettingsTab from './SettingsTab'
+import CalendarPanel from './calendar/CalendarPanel'
 import ChatPane from './chat/ChatPane'
 import SessionSidebar from './chat/SessionSidebar'
 import MemoryPanel from './memory/MemoryPanel'
@@ -42,6 +43,9 @@ function MainWindow() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const handleSelect = useCallback((id: string) => setSessionId(id), [])
 
+  // 点系统通知 → main 指定切到对应 tab（阶段 5 通知联动）；仅主窗口订阅，卸载退订
+  useEffect(() => window.fairy.onOpenTab((key) => setTab(key)), [])
+
   return (
     <div className="shell">
       <header className="titlebar">
@@ -63,12 +67,7 @@ function MainWindow() {
             )}
           </div>
         )}
-        {tab === 'calendar' && (
-          <div className="placeholder">
-            <h2>日程</h2>
-            <p>自然语言日程管理 + 托盘提醒将在<strong>阶段 5</strong>实现（§5.3）。</p>
-          </div>
-        )}
+        {tab === 'calendar' && <CalendarPanel />}
         {tab === 'memory' && <MemoryPanel />}
         {tab === 'settings' && <SettingsTab />}
       </main>

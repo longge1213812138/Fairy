@@ -4,8 +4,11 @@
  * - 本文件只留：userData 初始化、托盘、单实例锁、退出时 sidecar 回收。
  */
 import { app, BrowserWindow, Menu, Notification, Tray, nativeImage } from 'electron'
+import { join } from 'node:path'
 import { APP_NAME, FAIRY_VERSION } from '@fairy/core'
 import { initUserDataPath } from './config'
+import { initEvents } from './events'
+import { initNotifyLoop, shutdownNotifyLoop } from './notify-loop'
 import { initSidecar, shutdownSidecar } from './sidecar'
 import { registerIpcHandlers, registerTray } from './ipc'
 import {
@@ -66,6 +69,8 @@ if (!app.requestSingleInstanceLock()) {
     createMainWindow()
     createFloatWindow() // 预建隐藏：Alt+Space show 即出（DEV_PLAN §8 风险表）
     createTray()
+    initEvents(join(app.getPath('userData'), 'fairy.db')) // 日程存储（独立连接同一 fairy.db，先于 IPC handler）
+    initNotifyLoop() // §5.3 30s 通知轮询 + §8 启动清扫（先于 IPC handler）
     registerIpcHandlers()
     initSidecar()
     initChat()
@@ -79,7 +84,8 @@ if (!app.requestSingleInstanceLock()) {
 // 退出前解除全局热键（globalShortcut.unregisterAll 幂等，未注册也安全）
 app.on('will-quit', () => unregisterHotkeys())
 
-// 退出前清空闲记忆抽取定时器 + 停掉网关子进程（防 Windows 僵尸进程）；幂等防重入，3s 兜底超时在 shutdownSidecar 内
+// 退出前：先同步弹未触发日程提示 + 清通知轮询（尽力而为），再清空闲记忆抽取定时器，
+// 最后停掉网关子进程（防 Windows 僵尸进程）；幂等防重入，3s 兜底超时在 shutdownSidecar 内
 let shuttingDown = false
 app.on('before-quit', (event) => {
   if (shuttingDown) {
@@ -88,6 +94,7 @@ app.on('before-quit', (event) => {
   }
   shuttingDown = true
   event.preventDefault()
+  shutdownNotifyLoop()
   shutdownChat()
   shutdownSidecar().finally(() => app.exit())
 })

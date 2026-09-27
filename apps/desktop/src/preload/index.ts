@@ -9,6 +9,8 @@ import type {
   ChatDeltaEvent,
   ChatDoneEvent,
   ConfigureResult,
+  EventListFilter,
+  EventRecord,
   FairyApi,
   GatewayAccountConfig,
   GatewayState,
@@ -18,6 +20,7 @@ import type {
   MemoryRecord,
   MessageDto,
   SessionMeta,
+  TabKey,
   TestChatResult
 } from '@fairy/core'
 
@@ -59,6 +62,22 @@ contextBridge.exposeInMainWorld(
       stopGateway: (): Promise<ChannelState> => ipcRenderer.invoke(IPC.channelStop),
       test: (message: string): Promise<TestChatResult> => ipcRenderer.invoke(IPC.channelTest, message)
     },
+
+    // ===== 阶段 5：日程（eventChanged 双路广播：面板手动操作 + 聊天管道/通知轮询） =====
+    events: {
+      list: (filter?: EventListFilter): Promise<EventRecord[]> =>
+        ipcRenderer.invoke(IPC.eventList, filter),
+      add: (input: { title: string; remindAt: number; notes?: string }): Promise<EventRecord> =>
+        ipcRenderer.invoke(IPC.eventAdd, input),
+      complete: (id: number, done: boolean): Promise<void> =>
+        ipcRenderer.invoke(IPC.eventComplete, id, done),
+      remove: (id: number): Promise<void> => ipcRenderer.invoke(IPC.eventRemove, id),
+      onChanged: (cb: () => void): (() => void) => onEvent<void>(IPC.eventChanged, () => cb())
+    },
+
+    /** 点系统通知 → 主窗口切 tab（main 广播 {tab}，此处拆包成 TabKey 给 renderer） */
+    onOpenTab: (cb: (tab: TabKey) => void): (() => void) =>
+      onEvent<{ tab: TabKey }>(IPC.appOpenTab, (payload) => cb(payload.tab)),
 
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
 

@@ -1,5 +1,5 @@
 /**
- * 阶段 4 任务 A2：意图解析测试（docs/DEV_PLAN.md §5.1）。
+ * 阶段 4 任务 A2 / 阶段 5 任务 A4：意图解析测试（docs/DEV_PLAN.md §5.1）。
  * 用假 LlmClient（结构匹配 + as unknown as LlmClient）覆盖正常/容错/兜底全场景。
  */
 
@@ -55,7 +55,7 @@ describe('parse 正常路径', () => {
     await expect(parser.parse('今天天气怎么样')).resolves.toEqual({ intent: 'chat' });
   });
 
-  it('system prompt 注入当前时间与用户消息，且不含 schedule 相关词', async () => {
+  it('system prompt 注入当前时间与 7 个 intent 字样，用户消息照发', async () => {
     const { client, calls } = fakeClient(() => ({ content: '{"intent":"chat"}' }));
     const parser = createIntentParser(client);
     const now = new Date('2024-09-20T04:00:00.000Z');
@@ -66,13 +66,18 @@ describe('parse 正常路径', () => {
     const [system, user] = calls[0];
     expect(system.role).toBe('system');
     expect(system.content).toContain(now.toISOString());
-    expect(system.content).toContain('remember');
-    expect(system.content).toContain('forget');
-    expect(system.content).toContain('chat');
-    // 阶段 4 先行两个 intent：prompt 不得出现 schedule 相关词，避免模型提前输出无法处理的 intent
-    expect(system.content).not.toMatch(/schedule/i);
-    expect(system.content).not.toContain('日程');
-    expect(system.content).not.toContain('提醒');
+    // 阶段 5 扩展：7 个 intent 定义齐全（§5.1）
+    for (const kind of [
+      'remember',
+      'forget',
+      'schedule_add',
+      'schedule_done',
+      'schedule_cancel',
+      'schedule_query',
+      'chat'
+    ]) {
+      expect(system.content).toContain(kind);
+    }
     expect(user).toEqual({ role: 'user', content: '记住我喝美式不加糖' });
   });
 });
@@ -109,16 +114,14 @@ describe('parse 解析容错', () => {
     await expect(parserReturning('42').parse('x')).resolves.toEqual({ intent: 'chat' });
   });
 
-  it('intent 非法（含模型提前输出的 schedule_*）→ chat', async () => {
-    await expect(
-      parserReturning('{"intent":"schedule_add","payload":{"title":"交周报"}}').parse('x')
-    ).resolves.toEqual({ intent: 'chat' });
+  it('intent 非法/缺失 → chat（阶段 5 后 schedule_* 为合法 intent，不再兜底）', async () => {
     await expect(parserReturning('{"intent":"DELETE_ALL"}').parse('x')).resolves.toEqual({
       intent: 'chat'
     });
     await expect(parserReturning('{"payload":{"content":"x"}}').parse('x')).resolves.toEqual({
       intent: 'chat'
     });
+    await expect(parserReturning('{"intent":42}').parse('x')).resolves.toEqual({ intent: 'chat' });
   });
 
   it('remember 的 content trim 后为空 → chat', async () => {
@@ -189,5 +192,123 @@ describe('parse 异常兜底', () => {
     const controller = new AbortController();
     await createIntentParser(client).parse('x', { signal: controller.signal });
     expect(calls[0].signal).toBe(controller.signal);
+  });
+});
+
+describe('parse schedule_add', () => {
+  it('正常：title/remindAt/notes 齐全（ISO 原样透传，不换算）', async () => {
+    const parser = parserReturning(
+      '{"intent":"schedule_add","payload":{"title":"交周报","remind_at":"2024-09-28T10:00:00+08:00","notes":"发老板"}}'
+    );
+    await expect(parser.parse('9/28 上午十点提醒我交周报')).resolves.toEqual({
+      intent: 'schedule_add',
+      payload: { title: '交周报', remindAt: '2024-09-28T10:00:00+08:00', notes: '发老板' }
+    });
+  });
+
+  it('remind_at 缺失仍返回 schedule_add（main 校验后追问，parse 不降级）', async () => {
+    await expect(
+      parserReturning('{"intent":"schedule_add","payload":{"title":"交周报"}}').parse('x')
+    ).resolves.toEqual({ intent: 'schedule_add', payload: { title: '交周报' } });
+  });
+
+  it('remind_at 非法/非 ISO 任意字符串也透传，不降级 chat', async () => {
+    await expect(
+      parserReturning(
+        '{"intent":"schedule_add","payload":{"title":"交周报","remind_at":"明天上午十点"}}'
+      ).parse('x')
+    ).resolves.toEqual({
+      intent: 'schedule_add',
+      payload: { title: '交周报', remindAt: '明天上午十点' }
+    });
+    await expect(
+      parserReturning(
+        '{"intent":"schedule_add","payload":{"title":"交周报","remind_at":"not-a-date"}}'
+      ).parse('x')
+    ).resolves.toEqual({
+      intent: 'schedule_add',
+      payload: { title: '交周报', remindAt: 'not-a-date' }
+    });
+  });
+
+  it('title trim 后为空 / payload 缺失 → chat', async () => {
+    await expect(
+      parserReturning('{"intent":"schedule_add","payload":{"title":"   "}}').parse('x')
+    ).resolves.toEqual({ intent: 'chat' });
+    await expect(
+      parserReturning('{"intent":"schedule_add","payload":{"remind_at":"2024-09-28T10:00:00Z"}}').parse('x')
+    ).resolves.toEqual({ intent: 'chat' });
+  });
+});
+
+describe('parse schedule_done/cancel/query', () => {
+  it('keyword 单独命中（三个 intent 各一）', async () => {
+    for (const kind of ['schedule_done', 'schedule_cancel', 'schedule_query'] as const) {
+      const parser = parserReturning(`{"intent":"${kind}","payload":{"keyword":"周报"}}`);
+      await expect(parser.parse('x')).resolves.toEqual({
+        intent: kind,
+        payload: { keyword: '周报' }
+      });
+    }
+  });
+
+  it('scope 单独命中（四个枚举值）', async () => {
+    for (const scope of ['today', 'tomorrow', 'week', 'all'] as const) {
+      const parser = parserReturning(
+        `{"intent":"schedule_query","payload":{"scope":"${scope}"}}`
+      );
+      await expect(parser.parse('x')).resolves.toEqual({
+        intent: 'schedule_query',
+        payload: { scope }
+      });
+    }
+  });
+
+  it('keyword + scope 并存（AND 语义由 store 层保证）', async () => {
+    await expect(
+      parserReturning(
+        '{"intent":"schedule_cancel","payload":{"keyword":"周报","scope":"tomorrow"}}'
+      ).parse('x')
+    ).resolves.toEqual({
+      intent: 'schedule_cancel',
+      payload: { keyword: '周报', scope: 'tomorrow' }
+    });
+  });
+
+  it('keyword 与 scope 皆无/皆空 → chat', async () => {
+    for (const kind of ['schedule_done', 'schedule_cancel', 'schedule_query'] as const) {
+      await expect(
+        parserReturning(`{"intent":"${kind}","payload":{}}`).parse('x')
+      ).resolves.toEqual({ intent: 'chat' });
+    }
+    await expect(
+      parserReturning(
+        '{"intent":"schedule_query","payload":{"keyword":"  ","scope":""}}'
+      ).parse('x')
+    ).resolves.toEqual({ intent: 'chat' });
+  });
+
+  it('scope 非法枚举 → 丢 scope 保留 intent；keyword 也没有则 chat', async () => {
+    await expect(
+      parserReturning(
+        '{"intent":"schedule_done","payload":{"keyword":"周报","scope":"thismonth"}}'
+      ).parse('x')
+    ).resolves.toEqual({ intent: 'schedule_done', payload: { keyword: '周报' } });
+    await expect(
+      parserReturning('{"intent":"schedule_done","payload":{"scope":"next week"}}').parse('x')
+    ).resolves.toEqual({ intent: 'chat' });
+  });
+
+  it('围栏 + 前后废话 / 坏 JSON 兜底', async () => {
+    const parser = parserReturning(
+      '```json\n{"intent":"schedule_query","payload":{"scope":"today"}}\n```'
+    );
+    await expect(parser.parse('x')).resolves.toEqual({
+      intent: 'schedule_query',
+      payload: { scope: 'today' }
+    });
+    await expect(
+      parserReturning('{"intent":"schedule_query" broken').parse('x')
+    ).resolves.toEqual({ intent: 'chat' });
   });
 });

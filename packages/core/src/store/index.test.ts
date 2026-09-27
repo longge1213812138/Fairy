@@ -1,5 +1,5 @@
 /**
- * 阶段 4 任务 A2：迁移 v2（memories + memory_fts + 同步触发器）测试。
+ * 阶段 4 任务 A2 / 阶段 5 任务 A4：迁移 v2（memories + memory_fts + 同步触发器）/ v3（events）测试。
  * 每用例独立临时 db（mkdtempSync）；LATEST_SCHEMA_VERSION 断言，不硬编码版本号。
  */
 
@@ -132,5 +132,88 @@ describe('迁移 v2：memories + memory_fts', () => {
     const row = raw.prepare("SELECT v FROM kv WHERE k = 'schema_version'").get() as { v: string };
     expect(row.v).toBe(String(FUTURE_SCHEMA_VERSION));
     raw.close();
+  });
+});
+
+describe('迁移 v3：events（日程）', () => {
+  it('首次建库即 v3：events 表 + idx_events_remind 索引，schema_version=LATEST(3)', () => {
+    const db = openKeep(freshDb());
+
+    const version = db.prepare("SELECT v FROM kv WHERE k = 'schema_version'").get() as { v: string };
+    expect(version.v).toBe(String(LATEST_SCHEMA_VERSION));
+    expect(LATEST_SCHEMA_VERSION).toBe(3);
+
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'events'").all() as Array<{
+        name: string;
+      }>
+    ).map((r) => r.name);
+    expect(tables).toEqual(['events']);
+
+    const indexes = (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_remind'")
+        .all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    expect(indexes).toEqual(['idx_events_remind']);
+  });
+
+  it('二次 open 幂等：表/索引不重复、events 数据不丢不重', () => {
+    const dbPath = freshDb();
+    const db1 = openKeep(dbPath);
+    db1
+      .prepare('INSERT INTO events(title, notes, remind_at, done, fired, created_at) VALUES(?, ?, ?, 0, 0, ?)')
+      .run('交周报', null, 1000, 1);
+
+    openKeep(dbPath); // 并发二次 open
+    const db3 = openKeep(dbPath); // 再开一次
+
+    const indexes = (
+      db3
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_events_remind'")
+        .all() as Array<{ name: string }>
+    ).map((r) => r.name);
+    expect(indexes).toEqual(['idx_events_remind']); // 只有一个，不重复创建
+
+    const rows = db3.prepare('SELECT title FROM events').all() as Array<{ title: string }>;
+    expect(rows.map((r) => r.title)).toEqual(['交周报']);
+    const version = db3.prepare("SELECT v FROM kv WHERE k = 'schema_version'").get() as { v: string };
+    expect(version.v).toBe(String(LATEST_SCHEMA_VERSION));
+  });
+
+  it('v2 老库（schema_version=2）重开 → 自动补迁到 v3 且 v2 数据保留', () => {
+    const dbPath = freshDb();
+    // 手工只应用 v1+v2 迁移并把版本标回 2，模拟阶段 4 的老 fairy.db
+    const v2 = migrations.filter((m) => m.version <= 2);
+    const old = openKeep(dbPath);
+    for (const step of v2) step.up(old);
+    old.prepare("UPDATE kv SET v = '2' WHERE k = 'schema_version'").run();
+    old
+      .prepare(
+        'INSERT INTO memories(kind, content, source_session, weight, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)'
+      )
+      .run('note', '老记忆', null, 1, 1, 1);
+    old.close();
+
+    const db = openKeep(dbPath);
+    const version = db.prepare("SELECT v FROM kv WHERE k = 'schema_version'").get() as { v: string };
+    expect(version.v).toBe(String(LATEST_SCHEMA_VERSION));
+    const memories = db.prepare('SELECT content FROM memories').all() as Array<{ content: string }>;
+    expect(memories.map((m) => m.content)).toEqual(['老记忆']);
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
+    ).map((t) => t.name);
+    expect(tables).toEqual(expect.arrayContaining(['events']));
+  });
+
+  it('schema_version=4（LATEST+1）拒开且不覆盖数据', () => {
+    const FUTURE_SCHEMA_VERSION = LATEST_SCHEMA_VERSION + 1;
+    expect(FUTURE_SCHEMA_VERSION).toBe(4);
+    const dbPath = freshDb();
+    const setup = openKeep(dbPath);
+    setup.prepare("UPDATE kv SET v = ? WHERE k = 'schema_version'").run(String(FUTURE_SCHEMA_VERSION));
+    setup.close();
+
+    expect(() => openDatabase(dbPath)).toThrow(new RegExp(String(FUTURE_SCHEMA_VERSION)));
   });
 });

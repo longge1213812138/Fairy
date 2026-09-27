@@ -6,8 +6,8 @@
  * - 单飞：模块级 active，同一时刻只允许一条生成；sendChat 冲突直接返回 {ok:false,error}。
  * - 流水（DEV_PLAN §5.1 三步，全在单飞+busy+signal 之下）：
  *   user 落库 → assistant 空占位（拿 messageId）→ 广播 busy →
- *   ① 意图解析（parse，失败兜底 chat）→ ② 记忆动作（remember/forget，异常按 chat 继续）
- *   → ③ 记忆检索注入（top-8 + 动作确认语，buildContext systemExtra）→ streamChat；
+ *   ① 意图解析（parse，失败兜底 chat）→ ② 动作（remember/forget + 日程 schedule_*，异常按 chat 继续）
+ *   → ③ 记忆检索注入（top-8 + 动作确认语 / 日程注入，buildContext systemExtra）→ streamChat；
  *   回调累积本地 buffer 并广播 delta（content/reasoning 都发，渲染层自决定展示）。
  * - 完成/中止/过期/其他错误 → updateMessage 保留已生成部分 + meta，广播 chatDone。
  * - 空闲抽取（§5.2 沉淀时机 2）：chatDone（ok 非中止）/再次发送 → 5 分钟单例定时器（extract.ts）。
@@ -15,7 +15,8 @@
  *
  * 依赖单向：chat → windows / sidecar / channel / extract（均不回 import chat）。
  * createSessionStore/SessionStore（阶段 3 任务 A）与 createIntentParser/createMemoryStore/
- * formatMemoryBlock/MEMORY_TOP_K（阶段 4 任务 A2）均为 @fairy/core 冻结签名。
+ * formatMemoryBlock/MEMORY_TOP_K（阶段 4 任务 A2）以及 createCalendarStore/CalendarStore/
+ * formatEventTime/relativeDayLabel（阶段 5 任务 A4）均为 @fairy/core 冻结签名。
  */
 import { app } from 'electron'
 import { join } from 'node:path'
@@ -25,21 +26,26 @@ import {
   createIntentParser,
   createMemoryStore,
   createSessionStore,
+  formatEventTime,
   formatMemoryBlock,
+  relativeDayLabel,
   SessionExpiredError
 } from '@fairy/core'
 import type {
   ChatBusyEvent,
   ChatDeltaEvent,
   ChatDoneEvent,
+  EventRecord,
   IntentResult,
   MemoryStore,
   MessageDto,
+  ScheduleScope,
   SessionMeta,
   SessionStore
 } from '@fairy/core'
 import { resolveActiveChannel } from './channel'
 import type { ActiveChannel } from './channel'
+import { getEventStore } from './events'
 import { createIdleExtractor } from './extract'
 import type { IdleExtractor } from './extract'
 import { reportSessionExpired, reportSessionOk } from './sidecar'
@@ -214,6 +220,85 @@ async function runGeneration(
     actionNote = ''
   }
 
+  // ②b 日程动作 + 查询（阶段 5 §5.1/§5.3，与记忆动作并列；异常同样按 chat 继续、不写脏数据）
+  // A4 冻结：IntentKind 含 schedule_add/done/cancel/query，payload 含 {title, remindAt(ISO 串，可能缺失/非法), notes, keyword, scope}
+  let scheduleNote = '' // 动作结果（进 system，配 confirmNote 确认语指令）
+  let confirmNote = '' // 确认语指令（schedule_add 定制「复述准确时间」句；done/cancel 用通用句）
+  let scheduleExtra = '' // 非动作注入（无确认语指令）：add 时间非法追问 / query 查询结果
+  try {
+    const kind = asScheduleKind(intent.intent)
+    const p = (intent.payload ?? {}) as ScheduleIntentPayload
+    const now = Date.now()
+
+    if (kind === 'schedule_add') {
+      const title = typeof p.title === 'string' ? p.title.trim() : ''
+      if (title !== '') {
+        const rawRemindAt = typeof p.remindAt === 'string' ? p.remindAt : undefined
+        const t = rawRemindAt !== undefined ? Date.parse(rawRemindAt) : NaN
+        if (!Number.isFinite(t) || t < now - 60_000) {
+          // §5.1「非法则追问一次」：不写库、不加确认语指令，回复即追问
+          scheduleExtra = `【系统】用户想添加日程但时间无法解析（模型给的时间表达：${rawRemindAt ?? '缺失'}）。请向用户追问一次具体的日期和时间，只追问这一次，不要声称已安排。`
+        } else {
+          const notes = typeof p.notes === 'string' && p.notes.trim() !== '' ? p.notes.trim() : null
+          getEventStore().addEvent({ title, remindAt: t, notes })
+          broadcast(IPC.eventChanged) // 聊天管道写库 → 面板即时同步
+          scheduleNote = `系统已执行日程动作：已安排「${title}」于 ${formatEventTime(t)}（${relativeDayLabel(t)}）${notes ? `，备注：${notes}` : ''}。`
+          confirmNote = '请在回复开头确认并复述准确时间（例如：已帮你安排：9/28 10:00 交周报 ✓），再自然衔接。'
+        }
+      }
+    } else if (kind === 'schedule_done' || kind === 'schedule_cancel') {
+      const keyword = typeof p.keyword === 'string' ? p.keyword.trim() : ''
+      if (keyword !== '') {
+        const store = getEventStore()
+        const matched = store.matchEvents({
+          keyword,
+          scope: normalizeScope(p.scope),
+          includeDone: false,
+          now
+        })
+        for (const ev of matched) {
+          if (kind === 'schedule_done') store.completeEvent(ev.id, true)
+          else store.removeEvent(ev.id)
+        }
+        broadcast(IPC.eventChanged)
+        const list = matched.map((ev: EventRecord) => `${formatEventTime(ev.remindAt)} ${ev.title}`).join('、')
+        if (matched.length === 0) {
+          scheduleNote = `系统已执行日程动作：没有找到匹配的日程（关键词：${keyword}）。`
+        } else if (kind === 'schedule_done') {
+          scheduleNote = `系统已执行日程动作：已标记 ${matched.length} 条完成：${list}。`
+        } else {
+          scheduleNote = `系统已执行日程动作：已取消 ${matched.length} 条：${list}。`
+        }
+        confirmNote = '请在回复开头先用一句话向用户确认系统执行的结果，再自然衔接话题。'
+      }
+    } else if (kind === 'schedule_query') {
+      // 非动作（§5.3）：查询结果注入 systemExtra 让模型自然语言总结，不加确认语指令
+      const keyword = typeof p.keyword === 'string' ? p.keyword.trim() : ''
+      if (keyword !== '' || p.scope !== undefined) {
+        const matched = getEventStore().matchEvents({
+          keyword,
+          scope: normalizeScope(p.scope),
+          includeDone: false,
+          now
+        })
+        scheduleExtra =
+          matched.length > 0
+            ? `【相关日程】\n${matched
+                .map(
+                  (ev: EventRecord) =>
+                    `- ${formatEventTime(ev.remindAt)}（${relativeDayLabel(ev.remindAt)}）${ev.title}${ev.notes ? `；${ev.notes}` : ''}`
+                )
+                .join('\n')}`
+            : '【相关日程】（没有找到相关日程）'
+      }
+    }
+  } catch (err) {
+    console.warn('[calendar] 日程动作失败，按 chat 继续：', err instanceof Error ? err.message : err)
+    scheduleNote = ''
+    confirmNote = ''
+    scheduleExtra = ''
+  }
+
   // ③ 记忆检索注入（top-8 FTS5）+ 动作确认语（§5.2 注入格式）
   const extraParts: string[] = []
   try {
@@ -225,6 +310,13 @@ async function runGeneration(
   if (actionNote !== '') {
     extraParts.push(actionNote)
     extraParts.push('请在回复开头先用一句话给用户确认（例如：已帮你记下了 ✓），再自然衔接话题。')
+  }
+  if (scheduleExtra !== '') {
+    extraParts.push(scheduleExtra) // 日程查询结果 / 时间非法追问（无确认语指令）
+  }
+  if (scheduleNote !== '') {
+    extraParts.push(scheduleNote)
+    extraParts.push(confirmNote)
   }
   const systemExtra = extraParts.filter((part) => part.trim() !== '').join('\n\n')
 
@@ -300,6 +392,32 @@ async function runGeneration(
     active = null
     broadcast(IPC.chatBusy, { sessionId: null } satisfies ChatBusyEvent)
   }
+}
+
+// ===== 阶段 5：日程意图辅助（A4 冻结：IntentKind 含 schedule_*，payload 含 {title, remindAt, notes, keyword, scope}） =====
+
+const SCHEDULE_KINDS = ['schedule_add', 'schedule_done', 'schedule_cancel', 'schedule_query'] as const
+type ScheduleIntentKind = (typeof SCHEDULE_KINDS)[number]
+
+/** 宽字符串收窄（core 意图扩展落地前后均可编译；非 schedule_* 返回 null） */
+function asScheduleKind(kind: string): ScheduleIntentKind | null {
+  return (SCHEDULE_KINDS as readonly string[]).includes(kind) ? (kind as ScheduleIntentKind) : null
+}
+
+/** 日程 payload（防御式取值：缺失/类型不对一律按空处理；remindAt 为 ISO 字符串，可能缺失/非法） */
+interface ScheduleIntentPayload {
+  title?: string
+  remindAt?: string
+  notes?: string
+  keyword?: string
+  scope?: ScheduleScope
+}
+
+/** scope 缺失/非法一律 'all'（与 schedule_query 的 payload.scope ?? 'all' 语义一致） */
+function normalizeScope(value: unknown): ScheduleScope {
+  return value === 'today' || value === 'tomorrow' || value === 'week' || value === 'all'
+    ? value
+    : 'all'
 }
 
 /** LLM 客户端对 AbortSignal 的两种兑现方式：signal.reason（Error）或 DOMException AbortError */

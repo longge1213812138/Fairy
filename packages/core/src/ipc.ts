@@ -64,6 +64,18 @@ export interface FairyApi {
     /** 按当前通道做一轮非流式测试对话 */
     test(message: string): Promise<TestChatResult>;
   };
+  /** 日程（面板手动操作；意图路径在 main 内部直接写库） */
+  events: {
+    list(filter?: EventListFilter): Promise<EventRecord[]>;
+    add(input: { title: string; remindAt: number; notes?: string }): Promise<EventRecord>;
+    /** 勾选/取消完成 */
+    complete(id: number, done: boolean): Promise<void>;
+    remove(id: number): Promise<void>;
+    /** 意图/通知轮询变更时广播 */
+    onChanged(cb: () => void): () => void;
+  };
+  /** 点系统通知 → 主窗口切到指定 tab */
+  onOpenTab(cb: (tab: TabKey) => void): () => void;
   /** 仅允许 http/https（main 侧校验） */
   openExternal(url: string): Promise<void>;
   /** 订阅网关状态变化，返回退订函数 */
@@ -176,7 +188,13 @@ export const IPC = {
   channelSelect: 'channel:select',
   channelStart: 'channel:start',
   channelStop: 'channel:stop',
-  channelTest: 'channel:test'
+  channelTest: 'channel:test',
+  eventList: 'event:list',
+  eventAdd: 'event:add',
+  eventComplete: 'event:complete',
+  eventRemove: 'event:remove',
+  eventChanged: 'event:changed',
+  appOpenTab: 'app:openTab'
 } as const;
 
 // ===== 阶段 4：记忆类型 =====
@@ -238,3 +256,30 @@ export interface ChannelActionResult {
   error?: string;
   state?: ChannelState;
 }
+
+// ===== 阶段 5：日程 =====
+
+export type ScheduleScope = 'today' | 'tomorrow' | 'week' | 'all';
+
+export interface EventRecord {
+  id: number;
+  title: string;
+  notes: string | null;
+  /** 触发时间 epoch ms */
+  remindAt: number;
+  done: boolean;
+  /** 通知已触发（启动清扫也会置位，用于“已过期不补弹”） */
+  fired: boolean;
+  createdAt: number;
+}
+
+export interface EventListFilter {
+  /** 缺省 'all'；today/tomorrow/week 按本地时区日历窗过滤 */
+  scope?: ScheduleScope;
+  /** 缺省 true（含已完成） */
+  includeDone?: boolean;
+  limit?: number;
+}
+
+/** 主窗口底部 tab（点系统通知后由 main 指定切换） */
+export type TabKey = 'chat' | 'calendar' | 'memory' | 'settings';

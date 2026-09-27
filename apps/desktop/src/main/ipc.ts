@@ -11,6 +11,9 @@
  * - 阶段 4：记忆面板：memory:list / memory:add / memory:update / memory:remove /
  *   memory:export / memory:import；add/update/remove/import 成功后广播 memory:changed
  *   （聊天管道的 remember/forget/抽取变更在 chat.ts/extract.ts 内广播，双路汇一）
+ * - 阶段 5：日程面板：event:list / event:add / event:complete / event:remove；
+ *   add/complete/remove 成功后广播 event:changed（聊天管道 schedule_* 与通知轮询变更在
+ *   chat.ts/notify-loop.ts 内广播，三路汇一）
  * 事件广播：
  * - 网关状态：sidecar onState → broadcast('gateway:state')，300ms 去抖合并（'gateway:state' 为阶段 2 遗留通道名，不在 IPC 常量表，保持兼容）
  * - 聊天事件（delta/done/busy）与会话变化（session:changed）由 chat.ts 直接走 windows.broadcast
@@ -23,10 +26,12 @@ import { IPC, APP_NAME, FAIRY_VERSION } from '@fairy/core'
 import type {
   ApiChannelConfig,
   ChannelKind,
+  EventListFilter,
   GatewayAccountConfig,
   GatewayState,
   MemoryKind,
-  MemoryListFilter
+  MemoryListFilter,
+  ScheduleScope
 } from '@fairy/core'
 import {
   createSession,
@@ -37,6 +42,7 @@ import {
   sendChat,
   stopChat
 } from './chat'
+import { getEventStore } from './events'
 import { broadcast } from './windows'
 import { configureGateway, getGatewayState, onGatewayStateChanged } from './sidecar'
 import {
@@ -114,6 +120,52 @@ function parseMemoryFilter(filter: unknown): MemoryListFilter | undefined {
   return {
     ...(kind !== undefined ? { kind } : {}),
     ...(query !== undefined ? { query } : {}),
+    ...(limit !== undefined ? { limit } : {})
+  }
+}
+
+// ===== 阶段 5：日程入参校验（IPC 边界不信任 renderer，坏输入 throw → invoke reject） =====
+
+function parseEventId(id: unknown): number {
+  if (typeof id !== 'number' || !Number.isInteger(id)) throw new Error('id 必须为整数')
+  return id
+}
+
+function parseEventAdd(input: unknown): { title: string; remindAt: number; notes?: string | null } {
+  const obj = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+  const title = typeof obj.title === 'string' ? obj.title.trim() : ''
+  if (title === '') throw new Error('title 必须为非空字符串')
+  if (typeof obj.remindAt !== 'number' || !Number.isFinite(obj.remindAt)) {
+    throw new Error('remindAt 必须为有限数字（epoch 毫秒）')
+  }
+  const notes = typeof obj.notes === 'string' && obj.notes.trim() !== '' ? obj.notes.trim() : null
+  return { title, remindAt: obj.remindAt, notes }
+}
+
+function parseEventDone(done: unknown): boolean {
+  if (typeof done !== 'boolean') throw new Error('done 必须为布尔值')
+  return done
+}
+
+function parseScheduleScope(value: unknown): ScheduleScope | undefined {
+  return value === 'today' || value === 'tomorrow' || value === 'week' || value === 'all'
+    ? value
+    : undefined
+}
+
+/** 与 parseMemoryFilter 同策略：坏字段静默丢弃（缺省 = 全量含已完成），不 reject */
+function parseEventFilter(filter: unknown): EventListFilter | undefined {
+  const obj = (typeof filter === 'object' && filter !== null ? filter : {}) as Record<string, unknown>
+  const scope = parseScheduleScope(obj.scope)
+  const includeDone = typeof obj.includeDone === 'boolean' ? obj.includeDone : undefined
+  const limit =
+    typeof obj.limit === 'number' && Number.isFinite(obj.limit) && obj.limit > 0
+      ? Math.floor(obj.limit)
+      : undefined
+  if (scope === undefined && includeDone === undefined && limit === undefined) return undefined
+  return {
+    ...(scope !== undefined ? { scope } : {}),
+    ...(includeDone !== undefined ? { includeDone } : {}),
     ...(limit !== undefined ? { limit } : {})
   }
 }
@@ -219,6 +271,24 @@ export function registerIpcHandlers(): void {
     const result = getMemoryStore().importMany(raw)
     broadcast(IPC.memoryChanged)
     return result
+  })
+
+  // ===== 阶段 5：日程（面板 CRUD；与聊天管道/通知轮询同库，add/complete/remove 成功后广播 eventChanged） =====
+  ipcMain.handle(IPC.eventList, (_event, filter?: unknown) =>
+    getEventStore().listEvents(parseEventFilter(filter))
+  )
+  ipcMain.handle(IPC.eventAdd, (_event, input: unknown) => {
+    const record = getEventStore().addEvent(parseEventAdd(input))
+    broadcast(IPC.eventChanged)
+    return record
+  })
+  ipcMain.handle(IPC.eventComplete, (_event, id: unknown, done: unknown) => {
+    getEventStore().completeEvent(parseEventId(id), parseEventDone(done))
+    broadcast(IPC.eventChanged)
+  })
+  ipcMain.handle(IPC.eventRemove, (_event, id: unknown) => {
+    getEventStore().removeEvent(parseEventId(id))
+    broadcast(IPC.eventChanged)
   })
 
   // 网关状态广播：sidecar onState → 全窗口 send；300ms 去抖合并高频变化

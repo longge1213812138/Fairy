@@ -988,3 +988,209 @@ body {
 .gateway-actions .btn {
   margin-top: 8px;
 }
+
+/* ===== 阶段 5 · 日程面板（C4，§5.3） ===== */
+.calendar-panel {
+  max-width: 860px;
+}
+
+/* 工具栏：scope 切换（复用面板按钮风格） */
+.calendar-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.cal-scope-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cal-scope-group .btn {
+  margin-top: 0;
+}
+.cal-scope.active {
+  background: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+}
+.cal-scope.active:hover:not(:disabled) {
+  color: #fff;
+  opacity: 0.9;
+}
+
+/* 手动新增表单（顶部固定，风格同 .mem-form） */
+.cal-form {
+  border: 1px solid rgba(79, 70, 229, 0.35);
+  background: rgba(79, 70, 229, 0.06);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+.cal-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cal-form-row + .cal-form-row {
+  margin-top: 8px;
+}
+.cal-form-row .btn {
+  margin-top: 0;
+}
+.cal-input-title,
+.cal-input-time,
+.cal-input-notes {
+  padding: 7px 10px;
+  border: 1px solid rgba(107, 114, 128, 0.4);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13.5px;
+}
+.cal-input-title:focus,
+.cal-input-time:focus,
+.cal-input-notes:focus {
+  outline: none;
+  border-color: #4f46e5;
+}
+.cal-input-title {
+  flex: 1;
+  min-width: 180px;
+}
+.cal-input-notes {
+  flex: 1;
+  min-width: 180px;
+}
+/* datetime-local：与输入框协调（图标/文字同色系） */
+.cal-input-time {
+  color-scheme: light dark;
+  font-family: Consolas, 'Microsoft YaHei', monospace;
+  font-size: 13px;
+}
+
+/* 日程行：勾选框 + 时间列（定宽） + 标题/备注 + 徽章 + hover 删除 */
+.cal-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(107, 114, 128, 0.25);
+  border-radius: 10px;
+}
+.cal-row:hover {
+  border-color: rgba(79, 70, 229, 0.45);
+}
+.cal-check {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+  accent-color: #4f46e5;
+  cursor: pointer;
+}
+.cal-time {
+  flex-shrink: 0;
+  width: 96px;
+  font-family: Consolas, 'Courier New', monospace;
+  line-height: 1.6;
+}
+.cal-time-abs {
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.cal-time-rel {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.cal-main {
+  flex: 1;
+  min-width: 0;
+}
+.cal-title {
+  font-size: 13.5px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.cal-notes {
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  opacity: 0.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cal-row-done .cal-title {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+/* 状态徽章三色：已过期红 / 已完成灰 / 普通无徽章 */
+.cal-badge {
+  flex-shrink: 0;
+  margin-top: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.cal-badge-overdue {
+  background: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+}
+.cal-badge-done {
+  background: rgba(107, 114, 128, 0.14);
+  color: rgba(107, 114, 128, 0.9);
+}
+
+/* hover 显删除按钮（同 .mem-actions 模式） */
+.cal-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.cal-row:hover .cal-actions,
+.cal-row:focus-within .cal-actions {
+  opacity: 1;
+}
+.cal-actions .btn {
+  margin-top: 0;
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.cal-actions .btn.cal-del:hover:not(:disabled) {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+/* 空态 / 加载 */
+.cal-empty {
+  border: 1px dashed rgba(107, 114, 128, 0.4);
+  border-radius: 10px;
+  padding: 32px 20px;
+  text-align: center;
+  font-size: 13.5px;
+  line-height: 1.9;
+  opacity: 0.7;
+}
+.cal-empty-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.cal-loading {
+  padding: 12px;
+  font-size: 13px;
+  opacity: 0.55;
+}
